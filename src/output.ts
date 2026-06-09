@@ -12,6 +12,16 @@ export function link(url: string, label: string): string {
   return isTty ? `\x1b]8;;${url}\x1b\\${label}\x1b]8;;\x1b\\` : label;
 }
 
+const isErrTty = process.stderr.isTTY === true;
+
+export function progress(message: string): void {
+  if (isErrTty) process.stderr.write(`\x1b[2K\r${dim(message)}`);
+}
+
+export function clearProgress(): void {
+  if (isErrTty) process.stderr.write('\x1b[2K\r');
+}
+
 function bigintReplacer(_key: string, value: unknown): unknown {
   return typeof value === 'bigint' ? value.toString() : value;
 }

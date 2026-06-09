@@ -1,10 +1,13 @@
 import { currentDistributionCycle, fetchPoxInfo, isInPreparePhase } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
-import { resolveFirstPox5Cycle } from '../pox.js';
+import { callPoxReadOnly, resolveFirstPox5Cycle } from '../pox.js';
 import { output, printRows, printSection, stx, type Row } from '../output.js';
 
 export async function infoCommand(ctx: Ctx): Promise<void> {
-  const pox = await fetchPoxInfo(ctx.net);
+  const [pox, poxRead] = await Promise.all([fetchPoxInfo(ctx.net), callPoxReadOnly(ctx, 'get-pox-info', [])]);
+  const stakingMinUstx = (poxRead as { value: { value: Record<string, { value: bigint }> } }).value.value[
+    'min-amount-ustx'
+  ]!.value;
   const burnHeight = pox.currentBurnchainBlockHeight;
   const inPrepare = isInPreparePhase({ burnHeight, poxInfo: pox });
   const distCycle = currentDistributionCycle(pox);
@@ -22,6 +25,7 @@ export async function infoCommand(ctx: Ctx): Promise<void> {
       inPreparePhase: inPrepare,
       distributionCycle: distCycle,
       firstPox5RewardCycle: firstPox5 ?? null,
+      stakingMinimumUstx: stakingMinUstx,
       currentCycle: pox.currentCycle,
       nextCycle: pox.nextCycle,
     },
@@ -43,6 +47,7 @@ export async function infoCommand(ctx: Ctx): Promise<void> {
         ['in prepare phase', inPrepare],
         ['distribution cycle', distCycle],
         ['first PoX-5 cycle', firstPox5 ?? null],
+        ['staking minimum', stx(stakingMinUstx)],
       ]);
 
       const cycleRows = (label: string, c: typeof pox.currentCycle): Row[] => [

@@ -26,6 +26,7 @@ function btcNetwork(name: BtcNetworkName): typeof btc.NETWORK {
 
 export interface KeygenOpts {
   btcNetwork: BtcNetworkName;
+  env?: boolean;
 }
 
 export function keygenCommand(ctx: Ctx, opts: KeygenOpts): void {
@@ -46,6 +47,16 @@ export function keygenCommand(ctx: Ctx, opts: KeygenOpts): void {
     privateKeyHex: Buffer.from(btcPrivate).toString('hex'),
     address: btc.getAddress('wpkh', btcPrivate, net)!,
   };
+
+  if (opts.env) {
+    process.stdout.write(
+      `POX5_STX_PRIVATE_KEY=${stx.privateKey}\n` +
+        `POX5_STX_ADDRESS=${stx.address}\n` +
+        `POX5_BTC_WIF=${bitcoin.wif}\n` +
+        `POX5_BTC_ADDRESS=${bitcoin.address}\n`,
+    );
+    return;
+  }
 
   output(ctx, { stx, btc: bitcoin }, () => {
     printSection(`STX keys (${stx.network})`);

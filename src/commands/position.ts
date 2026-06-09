@@ -5,9 +5,12 @@ import {
   fetchStakerInfo,
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
+import { resolveStxAddress } from '../address.js';
 import { output, printRows, printSection, stx } from '../output.js';
 
-export async function positionCommand(ctx: Ctx, address: string): Promise<void> {
+export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<void> {
+  const address = resolveStxAddress(ctx, addressArg);
+
   const [pox, account, staker, bond] = await Promise.all([
     fetchPoxInfo(ctx.net),
     fetchAccountStatus({ address, ...ctx.net }),

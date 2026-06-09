@@ -56,7 +56,7 @@ pnpm build && node dist/pox5.cjs info
 
 | Command | What it shows |
 | --- | --- |
-| `info` | pox-5 contract id, burn height, reward cycle, cycle/prepare lengths, prepare-phase flag, distribution cycle |
+| `info` | pox-5 contract id, burn height, reward cycle, cycle/prepare lengths, prepare-phase flag, distribution cycle, staking minimum |
 | `position <stxAddress>` | STX balance/locked/liquid, unlock height, STX-only stake, paired-bond membership |
 | `bond <index> [--address <a>]` | bond params (target rate, ratio, early-unlock), sBTC fill, derived schedule, optional allowlist cap |
 | `schedule <index>` | phase timeline (announced → open → active → re-lock → closed) in burn heights, L1 unlock height |
@@ -65,7 +65,7 @@ pnpm build && node dist/pox5.cjs info
 | `totals [--bond <i>] [--cycle <c>]` | protocol-wide sBTC staked; per-bond fill or per-cycle STX |
 | `signer <signerManager> [--key <hex>] [--auth-id <n>]` | registered signer key, grant status, SIP-018 grant hash |
 | `signers [cycle] [--staker <a>] [--no-stakers]` | the cycle's signer set — each signer-manager (with the address controlling it, key, delegated STX/weight, shares) and the stakers delegating to it (discovered from contract events, confirmed on-chain). `--staker` resolves only the named addresses; `--no-stakers` shows the set only. Principals render as clickable explorer links in a TTY |
-| `faucet stx <stxAddress>` | request testnet STX |
+| `faucet stx [stxAddress] [--stacking]` | request testnet STX (500 STX; `--stacking` requests `min_amount_ustx`+20%, capped at 1 / 2 days). Defaults to `POX5_STX_ADDRESS` |
 | `faucet btc <btcAddress> [--large \| --xlarge]` | request testnet BTC (0.0001 / 0.01 / 0.5) |
 | `keygen [--btc-network <name>]` | generate a fresh STX keypair + BTC WIF/address (default `regtest` to match private-1) |
 

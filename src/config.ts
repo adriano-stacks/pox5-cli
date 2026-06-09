@@ -35,6 +35,8 @@ export interface Config {
   bitcoinApiUrl: string;
   explorerUrl: string;
   explorerChain: string;
+  stxAddress?: string;
+  btcAddress?: string;
   firstPox5Cycle?: number;
 }
 
@@ -83,6 +85,8 @@ export function loadConfig(overrides: CliOverrides = {}): Config {
   const bootAddress =
     overrides.bootAddress ?? process.env.POX5_BOOT_ADDRESS ?? base.bootAddress ?? DEFAULTS.bootAddress;
   const firstPox5Cycle = overrides.firstPox5Cycle ?? envInt('POX5_FIRST_POX5_CYCLE');
+  const stxAddress = process.env.POX5_STX_ADDRESS || undefined;
+  const btcAddress = process.env.POX5_BTC_ADDRESS || undefined;
 
   const network: StacksNetwork = {
     ...base,
@@ -91,7 +95,7 @@ export function loadConfig(overrides: CliOverrides = {}): Config {
     client: { ...base.client, baseUrl: stacksApiUrl },
   };
 
-  return { network, stacksApiUrl, extendedApiUrl, bitcoinApiUrl, explorerUrl, explorerChain, firstPox5Cycle };
+  return { network, stacksApiUrl, extendedApiUrl, bitcoinApiUrl, explorerUrl, explorerChain, stxAddress, btcAddress, firstPox5Cycle };
 }
 
 function stripTrailingSlash(url: string): string {

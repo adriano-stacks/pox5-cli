@@ -1,4 +1,5 @@
 import type { Ctx } from '../context.js';
+import { resolveBtcAddress, resolveStxAddress } from '../address.js';
 import { CliError } from '../errors.js';
 import { output, printRows, printSection } from '../output.js';
 
@@ -18,13 +19,20 @@ async function postFaucet(url: string): Promise<Record<string, unknown>> {
   }
 }
 
-export async function faucetStxCommand(ctx: Ctx, address: string): Promise<void> {
-  const body = await postFaucet(
-    `${ctx.config.extendedApiUrl}/v1/faucets/stx?address=${encodeURIComponent(address)}`,
-  );
-  output(ctx, body, () => {
+export interface FaucetStxOpts {
+  stacking?: boolean;
+}
+
+export async function faucetStxCommand(ctx: Ctx, addressArg?: string, opts: FaucetStxOpts = {}): Promise<void> {
+  const address = resolveStxAddress(ctx, addressArg);
+  const params = new URLSearchParams({ address });
+  if (opts.stacking) params.set('stacking', 'true');
+
+  const body = await postFaucet(`${ctx.config.extendedApiUrl}/v1/faucets/stx?${params.toString()}`);
+  output(ctx, { stacking: opts.stacking === true, ...body }, () => {
     printSection(`STX faucet — ${address}`);
     printRows([
+      ['mode', opts.stacking ? 'stacking (min_amount_ustx + 20%)' : 'standard (500 STX)'],
       ['success', body.success ?? true],
       ['txid', body.txId ?? body.txid ?? null],
     ]);
@@ -36,7 +44,8 @@ export interface FaucetBtcOpts {
   xlarge?: boolean;
 }
 
-export async function faucetBtcCommand(ctx: Ctx, address: string, opts: FaucetBtcOpts): Promise<void> {
+export async function faucetBtcCommand(ctx: Ctx, addressArg: string | undefined, opts: FaucetBtcOpts): Promise<void> {
+  const address = resolveBtcAddress(ctx, addressArg);
   const params = new URLSearchParams({ address });
   if (opts.xlarge) params.set('xlarge', 'true');
   else if (opts.large) params.set('large', 'true');

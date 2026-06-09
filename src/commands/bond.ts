@@ -37,8 +37,9 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
 
   if (!bond) throw new CliError(`bond ${bondIndex} is not configured on this contract`);
 
-  const allowance = opts.address
-    ? await fetchBondAllowance({ bondIndex, address: opts.address, ...ctx.net })
+  const allowanceAddress = opts.address ?? ctx.config.stxAddress;
+  const allowance = allowanceAddress
+    ? await fetchBondAllowance({ bondIndex, address: allowanceAddress, ...ctx.net })
     : undefined;
 
   const firstPox5 = resolveFirstPox5Cycle(ctx, pox);
@@ -80,7 +81,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       ];
       if (bond.capacitySats !== undefined) rows.push(['capacity', sats(bond.capacitySats)]);
       rows.push(['filled (sBTC)', sats(filledSbtc)]);
-      if (allowance !== undefined) rows.push([`allowance (${opts.address})`, sats(allowance)]);
+      if (allowance !== undefined) rows.push([`allowance (${allowanceAddress})`, sats(allowance)]);
       printRows(rows);
 
       printSection('Schedule');

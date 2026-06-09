@@ -10,7 +10,18 @@ import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { callPoxReadOnly } from '../pox.js';
 import { explorerLink } from '../explorer.js';
-import { dim, output, percent, printNote, printRows, printSection, stx, type Row } from '../output.js';
+import {
+  clearProgress,
+  dim,
+  output,
+  percent,
+  printNote,
+  printRows,
+  printSection,
+  progress,
+  stx,
+  type Row,
+} from '../output.js';
 
 export interface SignersOpts {
   staker: string[];
@@ -61,8 +72,7 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
   if (opts.stakers) {
     try {
       if (opts.staker.length > 0) {
-        const entries = await mapLimit(opts.staker, RESOLVE_CONCURRENCY, (s) => resolveStaker(ctx, s, cycle));
-        other = attachStakers(signers, entries);
+        other = attachStakers(signers, await resolveStakers(ctx, opts.staker, cycle));
       } else {
         const discovered = await discoverStakers(ctx, cycle);
         truncated = discovered.truncated;
@@ -71,6 +81,8 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
     } catch (e) {
       stakersError = (e as Error).message;
       for (const s of signers) s.stakers = null;
+    } finally {
+      clearProgress();
     }
   }
 
@@ -129,9 +141,6 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
 
       if (stakersError) printNote(`staker enumeration unavailable: ${stakersError}`);
       else if (truncated) printNote(`staker scan stopped at ${EVENT_MAX_PAGES * EVENT_PAGE_SIZE} events — list may be incomplete`);
-      else if (opts.stakers && complete && signers.length > 0) {
-        printNote('stakers discovered from pox-5 events, confirmed against on-chain per-cycle membership');
-      }
     },
   );
 }
@@ -168,8 +177,17 @@ async function collectSignerSet(ctx: Ctx, cycle: number): Promise<SignerEntry[]>
 
 async function discoverStakers(ctx: Ctx, cycle: number): Promise<{ entries: StakerEntry[]; truncated: boolean }> {
   const { principals, truncated } = await stakerPrincipalsFromEvents(ctx);
-  const resolved = await mapLimit(principals, RESOLVE_CONCURRENCY, (s) => resolveStaker(ctx, s, cycle));
+  const resolved = await resolveStakers(ctx, principals, cycle);
   return { entries: resolved.filter((e) => e.signer !== null), truncated };
+}
+
+async function resolveStakers(ctx: Ctx, principals: string[], cycle: number): Promise<StakerEntry[]> {
+  let done = 0;
+  return mapLimit(principals, RESOLVE_CONCURRENCY, async (s) => {
+    const entry = await resolveStaker(ctx, s, cycle);
+    progress(`resolving stakers… ${++done}/${principals.length}`);
+    return entry;
+  });
 }
 
 async function stakerPrincipalsFromEvents(ctx: Ctx): Promise<{ principals: string[]; truncated: boolean }> {
@@ -178,6 +196,7 @@ async function stakerPrincipalsFromEvents(ctx: Ctx): Promise<{ principals: strin
   let offset = 0;
 
   for (let page = 0; page < EVENT_MAX_PAGES; page++) {
+    progress(`scanning pox-5 events… page ${page + 1} (${found.size} stakers)`);
     const url = `${ctx.config.extendedApiUrl}/v1/contract/${contractId}/events?limit=${EVENT_PAGE_SIZE}&offset=${offset}`;
     const res = await fetch(url);
     if (!res.ok) throw new CliError(`pox-5 events request failed (HTTP ${res.status})`);

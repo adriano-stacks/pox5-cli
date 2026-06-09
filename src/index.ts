@@ -69,8 +69,8 @@ program
 
 program
   .command('position')
-  .description('a Stacks address’s STX balance/lock, STX-only stake, and paired bond')
-  .argument('<stxAddress>', 'Stacks principal')
+  .description('a Stacks address’s STX balance/lock, STX-only stake, and paired bond (default: POX5_STX_ADDRESS)')
+  .argument('[stxAddress]', 'Stacks principal (default: POX5_STX_ADDRESS)')
   .action(async (address, _o, cmd) => positionCommand(ctxOf(cmd), address));
 
 program
@@ -141,13 +141,14 @@ program
 const faucet = program.command('faucet').description('request testnet funds from the Hiro faucets');
 faucet
   .command('stx')
-  .description('request testnet STX')
-  .argument('<stxAddress>', 'Stacks principal')
-  .action(async (address, _o, cmd) => faucetStxCommand(ctxOf(cmd), address));
+  .description('request testnet STX (default: POX5_STX_ADDRESS)')
+  .argument('[stxAddress]', 'Stacks principal (default: POX5_STX_ADDRESS)')
+  .option('--stacking', 'request the larger stacking amount (min_amount_ustx + 20%; rate-limited to 1 / 2 days)')
+  .action(async (address, o, cmd) => faucetStxCommand(ctxOf(cmd), address, { stacking: o.stacking }));
 faucet
   .command('btc')
   .description('request testnet BTC (default 0.0001; --large 0.01; --xlarge 0.5)')
-  .argument('<btcAddress>', 'Bitcoin address')
+  .argument('[btcAddress]', 'Bitcoin address (default: POX5_BTC_ADDRESS)')
   .option('--large', '0.01 BTC')
   .option('--xlarge', '0.5 BTC')
   .action(async (address, o, cmd) => faucetBtcCommand(ctxOf(cmd), address, { large: o.large, xlarge: o.xlarge }));
@@ -156,7 +157,8 @@ program
   .command('keygen')
   .description('generate a fresh STX keypair and a BTC keypair (WIF + address)')
   .option('--btc-network <name>', `BTC address network: ${BTC_NETWORK_NAMES.join(' | ')}`, 'regtest')
-  .action((o, cmd) => keygenCommand(ctxOf(cmd), { btcNetwork: o.btcNetwork as BtcNetworkName }));
+  .option('--env', 'print POX5_* lines for redirecting into .env')
+  .action((o, cmd) => keygenCommand(ctxOf(cmd), { btcNetwork: o.btcNetwork as BtcNetworkName, env: o.env }));
 
 async function main() {
   await program.parseAsync(process.argv);
