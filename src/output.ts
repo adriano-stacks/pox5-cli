@@ -95,3 +95,7 @@ export function bps(value: number | bigint): string {
 export function percent(part: bigint, whole: bigint): string {
   return whole === 0n ? '0%' : `${(Number((part * 10000n) / whole) / 100).toFixed(2)}%`;
 }
+
+export function bitcoinBlocks(n: number): string {
+  return `${n} Bitcoin block${n === 1 ? '' : 's'}`;
+}

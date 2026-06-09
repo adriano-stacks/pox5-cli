@@ -7,6 +7,7 @@ import { dim } from './output.js';
 import { infoCommand } from './commands/info.js';
 import { positionCommand } from './commands/position.js';
 import { bondCommand } from './commands/bond.js';
+import { bondsCommand } from './commands/bonds.js';
 import { scheduleCommand } from './commands/schedule.js';
 import { quoteCommand } from './commands/quote.js';
 import { rewardsCommand } from './commands/rewards.js';
@@ -70,7 +71,7 @@ function ctxOf(cmd: Command) {
 
 program
   .command('info')
-  .description('PoX-5 contract + Bitcoin-chain state (cycle, lengths, prepare phase)')
+  .description('network, burn-chain, and reward-cycle state')
   .action(async (_o, cmd) => infoCommand(ctxOf(cmd)));
 
 program
@@ -78,6 +79,11 @@ program
   .description('a Stacks address’s STX balance/lock, STX-only stake, and paired bond (default: POX5_STX_ADDRESS)')
   .argument('[stxAddress]', 'Stacks principal (default: POX5_STX_ADDRESS)')
   .action(async (address, _o, cmd) => positionCommand(ctxOf(cmd), address));
+
+program
+  .command('bonds')
+  .description('list every bond set up on the contract (discovered from contract events)')
+  .action(async (_o, cmd) => bondsCommand(ctxOf(cmd)));
 
 program
   .command('bond')
@@ -164,7 +170,7 @@ program
     }),
   );
 
-const faucet = program.command('faucet').description('request testnet funds from the Hiro faucets');
+const faucet = program.command('faucet').description('request testnet funds from the faucets');
 faucet
   .command('stx')
   .description('request testnet STX (default: POX5_STX_ADDRESS)')
@@ -181,7 +187,7 @@ faucet
 
 program
   .command('keygen')
-  .description('generate a fresh STX keypair and a BTC keypair (WIF + address)')
+  .description('generate a fresh STX keypair and a BTC keypair (add --env to print .env format)')
   .option('--btc-network <name>', `BTC address network: ${BTC_NETWORK_NAMES.join(' | ')}`, 'regtest')
   .option('--env', 'print POX5_* lines for redirecting into .env')
   .action((o, cmd) => keygenCommand(ctxOf(cmd), { btcNetwork: o.btcNetwork as BtcNetworkName, env: o.env }));

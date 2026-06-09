@@ -7,7 +7,7 @@ import {
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
 import { requirePoxWithBondCycle } from '../pox.js';
-import { output, printRows, printSection } from '../output.js';
+import { bitcoinBlocks, output, printRows, printSection } from '../output.js';
 
 export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void> {
   const raw = await fetchPoxInfo(ctx.net);
@@ -49,9 +49,9 @@ export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void
       printSection('Phases (Bitcoin block height)');
       const width = phases.reduce((m, p) => Math.max(m, p.name.length), 0);
       for (const p of phases) {
-        const until = p.blocksUntilStart > 0 ? `  (in ${p.blocksUntilStart} Bitcoin blocks)` : '';
+        const until = p.blocksUntilStart > 0 ? `  (in ${bitcoinBlocks(p.blocksUntilStart)})` : '';
         process.stdout.write(
-          `  ${p.name.padEnd(width)}  ${p.startBitcoinBlockHeight} → ${p.endBitcoinBlockHeight}  [${p.lengthBlocks} Bitcoin blocks]${until}\n`,
+          `  ${p.name.padEnd(width)}  ${p.startBitcoinBlockHeight} → ${p.endBitcoinBlockHeight}  [${bitcoinBlocks(p.lengthBlocks)}]${until}\n`,
         );
       }
     },

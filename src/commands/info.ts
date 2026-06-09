@@ -2,7 +2,7 @@ import { currentDistributionCycle, fetchPoxInfo, isInPreparePhase } from '@stack
 import type { Ctx } from '../context.js';
 import { callPoxReadOnly, resolveFirstPox5Cycle } from '../pox.js';
 import { explorerLink } from '../explorer.js';
-import { dim, link, output, printRows, printSection, stx, type Row } from '../output.js';
+import { bitcoinBlocks, dim, link, output, printRows, printSection, stx, type Row } from '../output.js';
 
 export async function infoCommand(ctx: Ctx): Promise<void> {
   const [pox, poxRead, nextCycle, bitcoinBlockSeconds] = await Promise.all([
@@ -81,8 +81,8 @@ export async function infoCommand(ctx: Ctx): Promise<void> {
         ['Bitcoin block height', bitcoinHeight],
         ['first Bitcoin block height', pox.firstBurnchainBlockHeight],
         ['reward cycle', pox.rewardCycleId],
-        ['cycle length', `${pox.rewardCycleLength} Bitcoin blocks`],
-        ['prepare length', `${pox.prepareCycleLength} Bitcoin blocks`],
+        ['cycle length', bitcoinBlocks(pox.rewardCycleLength)],
+        ['prepare length', bitcoinBlocks(pox.prepareCycleLength)],
         ['in prepare phase', inPrepare],
         ['until prepare phase', untilPrepare],
         ['until next cycle', untilNewCycle],
@@ -126,7 +126,7 @@ function minutesFor(blocks: number | undefined, secondsPerBlock: number | undefi
 function countdown(blocks: number | undefined, minutes: number | undefined): string | null {
   if (blocks === undefined) return null;
   if (blocks <= 0) return 'now';
-  return minutes !== undefined ? `${blocks} Bitcoin blocks (~${humanizeMinutes(minutes)})` : `${blocks} Bitcoin blocks`;
+  return minutes !== undefined ? `${bitcoinBlocks(blocks)} (~${humanizeMinutes(minutes)})` : bitcoinBlocks(blocks);
 }
 
 async function estimateBitcoinBlockSeconds(ctx: Ctx): Promise<number | undefined> {
