@@ -12,3 +12,9 @@ export function resolveBtcAddress(ctx: Ctx, arg?: string): string {
   if (!address) throw new CliError('no BTC address given and POX5_BTC_ADDRESS is not set');
   return address;
 }
+
+export function resolveStxPrivateKey(): string {
+  const key = process.env.POX5_STX_PRIVATE_KEY;
+  if (!key) throw new CliError('POX5_STX_PRIVATE_KEY is not set — needed to sign the stake transaction');
+  return key;
+}

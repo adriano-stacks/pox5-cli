@@ -6,6 +6,7 @@ import {
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
 import { resolveStxAddress } from '../address.js';
+import { explorerLink } from '../explorer.js';
 import { output, printRows, printSection, stx } from '../output.js';
 
 export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<void> {
@@ -24,7 +25,7 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
     ctx,
     {
       address,
-      burnHeight: pox.currentBurnchainBlockHeight,
+      bitcoinBlockHeight: pox.currentBurnchainBlockHeight,
       account: {
         balance: account.balance,
         locked: account.locked,
@@ -36,7 +37,7 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
       bond: bond ?? null,
     },
     () => {
-      printSection(`Position — ${address}`);
+      printSection(`Position — ${explorerLink(ctx.config, address)}`);
       printRows([
         ['balance', stx(account.balance)],
         ['locked', stx(account.locked)],
@@ -52,7 +53,7 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
           ['amount', stx(d.amountUstx)],
           ['first reward cycle', d.firstRewardCycle],
           ['num cycles', d.numCycles],
-          ['signer-manager', d.signer],
+          ['signer-manager', explorerLink(ctx.config, d.signer)],
         ]);
       } else {
         printRows([['status', 'none']]);
@@ -63,7 +64,7 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
         printRows([
           ['bond index', bond.bondIndex],
           ['paired STX', stx(bond.amountUstx)],
-          ['signer-manager', bond.signer],
+          ['signer-manager', explorerLink(ctx.config, bond.signer)],
           ['lock type', bond.isL1Lock ? 'native BTC (L1 timelock)' : 'sBTC (L2)'],
         ]);
       } else {

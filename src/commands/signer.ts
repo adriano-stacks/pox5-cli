@@ -4,6 +4,7 @@ import {
   fetchVerifySignerKeyGrant,
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
+import { explorerLink } from '../explorer.js';
 import { output, printRows, printSection, type Row } from '../output.js';
 
 export interface SignerOpts {
@@ -37,7 +38,7 @@ export async function signerCommand(ctx: Ctx, signerManager: string, opts: Signe
       ];
       if (granted !== undefined) rows.push(['grant active (for --key)', granted]);
       if (grantHash !== undefined) rows.push(['grant message hash', grantHash]);
-      printSection(`Signer-manager — ${signerManager}`);
+      printSection(`Signer-manager — ${explorerLink(ctx.config, signerManager)}`);
       printRows(rows);
     },
   );

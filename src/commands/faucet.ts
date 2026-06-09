@@ -1,5 +1,6 @@
 import type { Ctx } from '../context.js';
 import { resolveBtcAddress, resolveStxAddress } from '../address.js';
+import { bitcoinAddressLink, bitcoinTxLink, explorerLink, explorerTxLink } from '../explorer.js';
 import { CliError } from '../errors.js';
 import { output, printRows, printSection } from '../output.js';
 
@@ -29,12 +30,13 @@ export async function faucetStxCommand(ctx: Ctx, addressArg?: string, opts: Fauc
   if (opts.stacking) params.set('stacking', 'true');
 
   const body = await postFaucet(`${ctx.config.extendedApiUrl}/v1/faucets/stx?${params.toString()}`);
+  const txid = (body.txId ?? body.txid) as string | undefined;
   output(ctx, { stacking: opts.stacking === true, ...body }, () => {
-    printSection(`STX faucet — ${address}`);
+    printSection(`STX faucet — ${explorerLink(ctx.config, address)}`);
     printRows([
       ['mode', opts.stacking ? 'stacking (min_amount_ustx + 20%)' : 'standard (500 STX)'],
       ['success', body.success ?? true],
-      ['txid', body.txId ?? body.txid ?? null],
+      ['txid', txid ? explorerTxLink(ctx.config, txid) : null],
     ]);
   });
 }
@@ -52,12 +54,13 @@ export async function faucetBtcCommand(ctx: Ctx, addressArg: string | undefined,
   const tier = opts.xlarge ? '0.5 BTC' : opts.large ? '0.01 BTC' : '0.0001 BTC';
 
   const body = await postFaucet(`${ctx.config.extendedApiUrl}/v1/faucets/btc?${params.toString()}`);
+  const txid = (body.txid ?? body.txId) as string | undefined;
   output(ctx, { tier, ...body }, () => {
-    printSection(`BTC faucet — ${address}`);
+    printSection(`BTC faucet — ${bitcoinAddressLink(ctx.config, address)}`);
     printRows([
       ['tier', tier],
       ['success', body.success ?? true],
-      ['txid', body.txid ?? body.txId ?? null],
+      ['txid', txid ? bitcoinTxLink(ctx.config, txid) : null],
     ]);
   });
 }

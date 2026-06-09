@@ -21,30 +21,37 @@ export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void
 
   const phases = ranges.map((r) => ({
     name: r.name,
-    startBurnHeight: r.startBurnHeight,
-    endBurnHeight: r.endBurnHeight,
+    startBitcoinBlockHeight: r.startBurnHeight,
+    endBitcoinBlockHeight: r.endBurnHeight,
     lengthBlocks: r.length,
     blocksUntilStart: Math.max(0, r.startBurnHeight - now),
   }));
 
   output(
     ctx,
-    { bondIndex, currentBurnHeight: now, isActiveNow: active, inPreparePhase: inPrepare, l1UnlockHeight: l1Unlock, phases },
+    {
+      bondIndex,
+      currentBitcoinBlockHeight: now,
+      isActiveNow: active,
+      inPreparePhase: inPrepare,
+      l1UnlockHeight: l1Unlock,
+      phases,
+    },
     () => {
       printSection(`Bond ${bondIndex} schedule`);
       printRows([
-        ['current burn height', now],
+        ['current Bitcoin block height', now],
         ['active now', active],
         ['in prepare phase', inPrepare],
         ['L1 unlock height', l1Unlock],
       ]);
 
-      printSection('Phases (burn height)');
+      printSection('Phases (Bitcoin block height)');
       const width = phases.reduce((m, p) => Math.max(m, p.name.length), 0);
       for (const p of phases) {
-        const until = p.blocksUntilStart > 0 ? `  (in ${p.blocksUntilStart} blocks)` : '';
+        const until = p.blocksUntilStart > 0 ? `  (in ${p.blocksUntilStart} Bitcoin blocks)` : '';
         process.stdout.write(
-          `  ${p.name.padEnd(width)}  ${p.startBurnHeight} → ${p.endBurnHeight}  [${p.lengthBlocks} blocks]${until}\n`,
+          `  ${p.name.padEnd(width)}  ${p.startBitcoinBlockHeight} → ${p.endBitcoinBlockHeight}  [${p.lengthBlocks} Bitcoin blocks]${until}\n`,
         );
       }
     },

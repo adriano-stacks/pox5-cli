@@ -69,7 +69,7 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
   let truncated = false;
   let stakersError: string | undefined;
 
-  if (opts.stakers) {
+  if (opts.stakers || opts.staker.length > 0) {
     try {
       if (opts.staker.length > 0) {
         other = attachStakers(signers, await resolveStakers(ctx, opts.staker, cycle));

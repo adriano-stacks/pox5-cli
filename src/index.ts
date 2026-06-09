@@ -13,6 +13,7 @@ import { rewardsCommand } from './commands/rewards.js';
 import { totalsCommand } from './commands/totals.js';
 import { signerCommand } from './commands/signer.js';
 import { signersCommand } from './commands/signers.js';
+import { stakeCommand } from './commands/stake.js';
 import { faucetBtcCommand, faucetStxCommand } from './commands/faucet.js';
 import { keygenCommand, BTC_NETWORK_NAMES, type BtcNetworkName } from './commands/keygen.js';
 
@@ -41,6 +42,11 @@ const floatArg = (name: string) => (v: string): number => {
   if (!Number.isFinite(n) || n <= 0) throw new CliError(`${name} must be a positive number (got "${v}")`);
   return n;
 };
+const stxArg = (name: string) => (v: string): bigint => {
+  if (!/^\d+(\.\d{1,6})?$/.test(v)) throw new CliError(`${name} must be STX with up to 6 decimals (got "${v}")`);
+  const [whole = '0', frac = ''] = v.split('.');
+  return BigInt(whole) * 1_000_000n + BigInt(frac.padEnd(6, '0'));
+};
 
 const program = new Command();
 
@@ -64,7 +70,7 @@ function ctxOf(cmd: Command) {
 
 program
   .command('info')
-  .description('PoX-5 contract + burn-chain state (cycle, lengths, prepare phase)')
+  .description('PoX-5 contract + Bitcoin-chain state (cycle, lengths, prepare phase)')
   .action(async (_o, cmd) => infoCommand(ctxOf(cmd)));
 
 program
@@ -126,16 +132,36 @@ const collectList = (v: string, acc: string[] = []): string[] => {
 
 program
   .command('signers')
-  .description('a cycle’s signer set, the stakers delegating to each, and who controls each signer')
+  .description('a cycle’s signer set and who controls each signer (add --stakers to also list delegating stakers)')
   .argument('[cycle]', 'reward cycle (default: current)', intArg('cycle'))
+  .option('--stakers', 'also list the stakers delegating to each signer (queries contract events)')
   .option(
     '--staker <addr>',
-    'resolve only these stakers (repeatable, comma-separated) instead of discovering all',
+    'list only these stakers (repeatable, comma-separated); implies --stakers for the named addresses',
     collectList,
   )
-  .option('--no-stakers', 'skip staker enumeration; show the signer set only')
   .action(async (cycle, o, cmd) =>
-    signersCommand(ctxOf(cmd), cycle, { staker: o.staker ?? [], stakers: o.stakers !== false }),
+    signersCommand(ctxOf(cmd), cycle, { staker: o.staker ?? [], stakers: o.stakers === true }),
+  );
+
+program
+  .command('stake')
+  .description('lock STX through a signer-manager (solo STX staking); dry run unless --broadcast')
+  .requiredOption('--signer-manager <principal>', 'signer-manager contract to route through')
+  .requiredOption('--amount <stx>', 'STX to lock (e.g. 60000)', stxArg('--amount'))
+  .requiredOption('--cycles <n>', 'number of reward cycles to lock for', intArg('--cycles'))
+  .option('--start-height <h>', 'first Bitcoin block height (default: current)', intArg('--start-height'))
+  .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
+  .action(async (o, cmd) =>
+    stakeCommand(ctxOf(cmd), {
+      signerManager: o.signerManager,
+      amountUstx: o.amount,
+      cycles: o.cycles,
+      startHeight: o.startHeight,
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    }),
   );
 
 const faucet = program.command('faucet').description('request testnet funds from the Hiro faucets');

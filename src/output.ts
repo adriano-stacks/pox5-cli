@@ -37,10 +37,17 @@ export function output(ctx: { json: boolean }, json: unknown, human: () => void)
 
 export type Row = [label: string, value: unknown];
 
+const ANSI_OSC = /\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;]*m/g;
+
+function visibleLength(s: string): number {
+  return s.replace(ANSI_OSC, '').length;
+}
+
 export function printRows(rows: Row[]): void {
-  const width = rows.reduce((m, [label]) => Math.max(m, label.length), 0);
+  const width = rows.reduce((m, [label]) => Math.max(m, visibleLength(label)), 0);
   for (const [label, value] of rows) {
-    process.stdout.write(`${dim((label + ':').padEnd(width + 1))} ${fmt(value)}\n`);
+    const pad = ' '.repeat(width - visibleLength(label) + 1);
+    process.stdout.write(`${dim(label + ':')}${pad}${fmt(value)}\n`);
   }
 }
 

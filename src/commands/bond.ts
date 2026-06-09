@@ -12,6 +12,7 @@ import {
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
+import { explorerLink } from '../explorer.js';
 import { resolveFirstPox5Cycle, withFirstPox5Cycle } from '../pox.js';
 import { bps, output, printNote, printRows, printSection, sats, type Row } from '../output.js';
 
@@ -44,13 +45,13 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
 
   const firstPox5 = resolveFirstPox5Cycle(ctx, pox);
   let schedule:
-    | { firstRewardCycle: number; openBurnHeight: number; status: string; l1UnlockHeight: bigint }
+    | { firstRewardCycle: number; openBitcoinBlockHeight: number; status: string; l1UnlockHeight: bigint }
     | undefined;
   if (firstPox5 !== undefined) {
     const p = withFirstPox5Cycle(pox, firstPox5);
     schedule = {
       firstRewardCycle: bondPeriodToRewardCycle({ bondIndex, poxInfo: p }),
-      openBurnHeight: bondPeriodToBurnHeight({ bondIndex, poxInfo: p }),
+      openBitcoinBlockHeight: bondPeriodToBurnHeight({ bondIndex, poxInfo: p }),
       status: phaseAt(pox.currentBurnchainBlockHeight, p, bondIndex),
       l1UnlockHeight: await fetchBondL1UnlockHeight({ bondIndex, ...ctx.net }),
     };
@@ -76,12 +77,14 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
         ['target rate', bps(bond.targetRateBps)],
         ['stx value ratio', `${bond.stxValueRatio} uSTX / 100 sats`],
         ['min stx ratio', bps(bond.minUstxRatioBps)],
-        ['early-unlock admin', bond.earlyUnlockAdmin],
+        ['early-unlock admin', explorerLink(ctx.config, bond.earlyUnlockAdmin)],
         ['early-unlock signers', bond.earlyUnlockSigners],
       ];
       if (bond.capacitySats !== undefined) rows.push(['capacity', sats(bond.capacitySats)]);
       rows.push(['filled (sBTC)', sats(filledSbtc)]);
-      if (allowance !== undefined) rows.push([`allowance (${allowanceAddress})`, sats(allowance)]);
+      if (allowance !== undefined) {
+        rows.push(['allowance', `${sats(allowance)} for ${explorerLink(ctx.config, allowanceAddress!)}`]);
+      }
       printRows(rows);
 
       printSection('Schedule');
@@ -89,7 +92,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
         printRows([
           ['status', schedule.status],
           ['first reward cycle', schedule.firstRewardCycle],
-          ['open burn height', schedule.openBurnHeight],
+          ['open Bitcoin block height', schedule.openBitcoinBlockHeight],
           ['L1 unlock height', schedule.l1UnlockHeight],
         ]);
       } else {

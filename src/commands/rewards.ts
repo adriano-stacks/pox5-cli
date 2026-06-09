@@ -7,6 +7,7 @@ import {
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
+import { explorerLink } from '../explorer.js';
 import { output, printRows, printSection, sats, stx } from '../output.js';
 
 export interface RewardsOpts {
@@ -34,7 +35,7 @@ export async function rewardsCommand(ctx: Ctx, signerManager: string, opts: Rewa
     ctx,
     { signerManager, leg: isBond ? 'bond' : 'stx-cycle', index, earned, unclaimed, rptSettled, shares },
     () => {
-      printSection(`Rewards — ${signerManager}`);
+      printSection(`Rewards — ${explorerLink(ctx.config, signerManager)}`);
       printRows([
         ['leg', isBond ? `bond ${index}` : `STX cycle ${index}`],
         ['earned (claimable)', sats(earned)],

@@ -4,9 +4,10 @@ A TypeScript CLI for inspecting the Stacks **PoX-5** (Bitcoin Staking) internal
 testnet, built on [`@stacks/bitcoin-staking`](https://www.npmjs.com/package/@stacks/bitcoin-staking)
 and `@stacks/transactions`.
 
-**Scope:** read-only inspection (v1) — network/cycle state, positions, bonds,
+**Scope:** read-only inspection — network/cycle state, positions, bonds,
 ratio quotes, schedules, rewards, signer-manager grants — plus the testnet
-faucets. Write flows (solo STX, paired BTC, rewards/admin) come later.
+faucets, and solo STX staking (`stake`). Remaining write flows (paired BTC,
+rewards/admin) come later.
 
 ## Requirements
 
@@ -56,15 +57,16 @@ pnpm build && node dist/pox5.cjs info
 
 | Command | What it shows |
 | --- | --- |
-| `info` | pox-5 contract id, burn height, reward cycle, cycle/prepare lengths, prepare-phase flag, distribution cycle, staking minimum |
+| `info` | active pox contract id, PoX activation heights (per-version epoch boundaries), Bitcoin block height, reward cycle, cycle/prepare lengths, prepare-phase flag + blocks/minutes until prepare, distribution cycle, staking minimum |
 | `position <stxAddress>` | STX balance/locked/liquid, unlock height, STX-only stake, paired-bond membership |
 | `bond <index> [--address <a>]` | bond params (target rate, ratio, early-unlock), sBTC fill, derived schedule, optional allowlist cap |
-| `schedule <index>` | phase timeline (announced → open → active → re-lock → closed) in burn heights, L1 unlock height |
+| `schedule <index>` | phase timeline (announced → open → active → re-lock → closed) in Bitcoin block heights, L1 unlock height |
 | `quote --bond <i> (--sats <n> \| --btc <n>)` | required STX for a BTC commitment under the bond's static ratio |
 | `rewards <signerManager> (--bond <i> \| --cycle <c>)` | earned/unclaimed sBTC, settled RPT, shares for a leg |
 | `totals [--bond <i>] [--cycle <c>]` | protocol-wide sBTC staked; per-bond fill or per-cycle STX |
 | `signer <signerManager> [--key <hex>] [--auth-id <n>]` | registered signer key, grant status, SIP-018 grant hash |
-| `signers [cycle] [--staker <a>] [--no-stakers]` | the cycle's signer set — each signer-manager (with the address controlling it, key, delegated STX/weight, shares) and the stakers delegating to it (discovered from contract events, confirmed on-chain). `--staker` resolves only the named addresses; `--no-stakers` shows the set only. Principals render as clickable explorer links in a TTY |
+| `signers [cycle] [--stakers] [--staker <a>]` | the cycle's signer set — each signer-manager (with the address controlling it, key, delegated STX/weight, shares). Add `--stakers` to also list the stakers delegating to each (discovered from contract events, confirmed on-chain), or `--staker <a>` for only named addresses. Principals render as clickable explorer links in a TTY |
+| `stake --signer-manager <c> --amount <stx> --cycles <n> [--start-height <h>] [--fee <ustx>] [--broadcast]` | lock STX through a signer-manager (solo STX staking). Dry-run by default; `--broadcast` signs with `POX5_STX_PRIVATE_KEY` and sends. Reverts in the prepare phase |
 | `faucet stx [stxAddress] [--stacking]` | request testnet STX (500 STX; `--stacking` requests `min_amount_ustx`+20%, capped at 1 / 2 days). Defaults to `POX5_STX_ADDRESS` |
 | `faucet btc <btcAddress> [--large \| --xlarge]` | request testnet BTC (0.0001 / 0.01 / 0.5) |
 | `keygen [--btc-network <name>]` | generate a fresh STX keypair + BTC WIF/address (default `regtest` to match private-1) |
