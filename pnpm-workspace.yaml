@@ -1,0 +1,6 @@
+allowBuilds:
+  esbuild: true
+# Don't re-run install before every `pnpm run`, and don't treat ignored
+# build scripts as a hard error.
+verifyDepsBeforeRun: false
+strictDepBuilds: false

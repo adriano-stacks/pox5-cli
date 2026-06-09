@@ -1,0 +1,46 @@
+{
+  "name": "pox5-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CLI for the Stacks PoX-5 (Bitcoin Staking) internal testnet",
+  "type": "module",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "pox5": "dist/pox5.cjs"
+  },
+  "files": [
+    "dist/pox5.cjs",
+    "src",
+    "scripts/fix-esm-marker.mjs",
+    ".env.example",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/fix-esm-marker.mjs",
+    "fix:esm": "node scripts/fix-esm-marker.mjs",
+    "pox5": "tsx src/index.ts",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs",
+    "start": "node dist/pox5.cjs"
+  },
+  "dependencies": {
+    "@scure/btc-signer": "^2.0.1",
+    "@stacks/bitcoin-staking": "7.4.1-pr.1854.3",
+    "@stacks/common": "7.4.1-pr.1854.3",
+    "@stacks/network": "7.4.1-pr.1854.3",
+    "@stacks/transactions": "7.4.1-pr.1854.3",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "esbuild": "^0.28.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
