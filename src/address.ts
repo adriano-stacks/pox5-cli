@@ -18,3 +18,13 @@ export function resolveStxPrivateKey(): string {
   if (!key) throw new CliError('POX5_STX_PRIVATE_KEY is not set — needed to sign the stake transaction');
   return key;
 }
+
+export function resolveBondAdminPrivateKey(): string {
+  const key = process.env.POX5_BOND_ADMIN_PRIVATE_KEY || process.env.POX5_STX_PRIVATE_KEY;
+  if (!key) {
+    throw new CliError(
+      'no admin key set — set POX5_BOND_ADMIN_PRIVATE_KEY (or POX5_STX_PRIVATE_KEY) to sign the setup-bond transaction',
+    );
+  }
+  return key;
+}

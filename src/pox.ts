@@ -1,6 +1,12 @@
 import { firstPox5RewardCycle } from '@stacks/bitcoin-staking';
 import type { PoxInfo } from '@stacks/bitcoin-staking';
-import { fetchCallReadOnlyFunction, type ClarityValue } from '@stacks/transactions';
+import {
+  ClarityType,
+  cvToValue,
+  fetchCallReadOnlyFunction,
+  uintCV,
+  type ClarityValue,
+} from '@stacks/transactions';
 import type { Ctx } from './context.js';
 import { CliError } from './errors.js';
 
@@ -20,6 +26,29 @@ export function callPoxReadOnly(
     senderAddress: boot,
     ...ctx.net,
   });
+}
+
+export interface BondConfig {
+  bondIndex: number;
+  targetRateBps: number;
+  stxValueRatio: bigint;
+  minUstxRatioBps: number;
+  earlyUnlockBytes: string;
+  earlyUnlockAdmin: string;
+}
+
+export async function fetchBondConfig(ctx: Ctx, bondIndex: number): Promise<BondConfig | undefined> {
+  const result = await callPoxReadOnly(ctx, 'get-protocol-bond', [uintCV(bondIndex)]);
+  if (result.type !== ClarityType.OptionalSome) return undefined;
+  const f = (result.value as { value: Record<string, ClarityValue> }).value;
+  return {
+    bondIndex,
+    targetRateBps: Number((f['target-rate'] as { value: bigint }).value),
+    stxValueRatio: (f['stx-value-ratio'] as { value: bigint }).value,
+    minUstxRatioBps: Number((f['min-ustx-ratio'] as { value: bigint }).value),
+    earlyUnlockBytes: (f['early-unlock-bytes'] as { value: string }).value,
+    earlyUnlockAdmin: cvToValue(f['early-unlock-admin']!) as string,
+  };
 }
 
 export function resolveFirstPox5Cycle(ctx: Ctx, pox: PoxInfo): number | undefined {

@@ -15,6 +15,7 @@ import { totalsCommand } from './commands/totals.js';
 import { signerCommand } from './commands/signer.js';
 import { signersCommand } from './commands/signers.js';
 import { stakeCommand } from './commands/stake.js';
+import { setupBondCommand, type AllowEntry } from './commands/setup-bond.js';
 import { faucetBtcCommand, faucetStxCommand } from './commands/faucet.js';
 import { keygenCommand, BTC_NETWORK_NAMES, type BtcNetworkName } from './commands/keygen.js';
 
@@ -47,6 +48,34 @@ const stxArg = (name: string) => (v: string): bigint => {
   if (!/^\d+(\.\d{1,6})?$/.test(v)) throw new CliError(`${name} must be STX with up to 6 decimals (got "${v}")`);
   const [whole = '0', frac = ''] = v.split('.');
   return BigInt(whole) * 1_000_000n + BigInt(frac.padEnd(6, '0'));
+};
+const hexArg = (name: string, maxBytes?: number) => (v: string): string => {
+  const h = /^0x/i.test(v) ? v.slice(2) : v;
+  if (!/^[0-9a-fA-F]*$/.test(h) || h.length % 2 !== 0) {
+    throw new CliError(`${name} must be hex-encoded bytes (got "${v}")`);
+  }
+  if (maxBytes !== undefined && h.length / 2 > maxBytes) {
+    throw new CliError(`${name} must be at most ${maxBytes} bytes (got ${h.length / 2})`);
+  }
+  return h;
+};
+const collectAllow = (v: string, acc: AllowEntry[] = []): AllowEntry[] => {
+  for (const item of v.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const sep = item.indexOf(':');
+    if (sep < 0) throw new CliError(`--allow must be <staker>:<maxSats> (got "${item}")`);
+    const staker = item.slice(0, sep).trim();
+    const satsStr = item.slice(sep + 1).trim();
+    if (!staker) throw new CliError(`--allow staker is empty (got "${item}")`);
+    let maxSats: bigint;
+    try {
+      maxSats = BigInt(satsStr);
+    } catch {
+      throw new CliError(`--allow maxSats must be an integer (got "${satsStr}")`);
+    }
+    if (maxSats < 0n) throw new CliError(`--allow maxSats must be non-negative (got "${satsStr}")`);
+    acc.push({ staker, maxSats });
+  }
+  return acc;
 };
 
 const program = new Command();
@@ -90,7 +119,8 @@ program
   .description('a bond’s parameters, fill, and (if derivable) schedule')
   .argument('<index>', 'bond index', intArg('index'))
   .option('--address <addr>', 'also show this principal’s allowlist cap for the bond')
-  .action(async (index, o, cmd) => bondCommand(ctxOf(cmd), index, { address: o.address }));
+  .option('--allowlist', 'list the full allowlist + capacity (queries contract events)')
+  .action(async (index, o, cmd) => bondCommand(ctxOf(cmd), index, { address: o.address, allowlist: o.allowlist === true }));
 
 program
   .command('schedule')
@@ -165,6 +195,32 @@ program
       amountUstx: o.amount,
       cycles: o.cycles,
       startHeight: o.startHeight,
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    }),
+  );
+
+program
+  .command('setup-bond')
+  .description('issue a protocol bond (bond-admin only); dry run unless --broadcast')
+  .argument('<index>', 'bond index to set up', intArg('index'))
+  .requiredOption('--target-rate <bps>', 'target yield APY in basis points', intArg('--target-rate'))
+  .requiredOption('--stx-ratio <n>', 'STX:BTC value ratio (uSTX per 100 sats)', bigIntArg('--stx-ratio'))
+  .requiredOption('--min-ratio <bps>', 'minimum STX collateral ratio in basis points', intArg('--min-ratio'))
+  .requiredOption('--early-unlock-bytes <hex>', 'Bitcoin early-exit script bytes', hexArg('--early-unlock-bytes', 683))
+  .requiredOption('--early-unlock-admin <principal>', 'principal allowed to announce early exits')
+  .option('--allow <staker:maxSats>', 'allowlist a staker and its max sats (repeatable, comma-separated)', collectAllow)
+  .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
+  .action(async (index, o, cmd) =>
+    setupBondCommand(ctxOf(cmd), {
+      bondIndex: index,
+      targetRateBps: o.targetRate,
+      stxValueRatio: o.stxRatio,
+      minUstxRatioBps: o.minRatio,
+      earlyUnlockBytesHex: o.earlyUnlockBytes,
+      earlyUnlockAdmin: o.earlyUnlockAdmin,
+      allowlist: o.allow ?? [],
       fee: o.fee ?? 10000n,
       broadcast: o.broadcast === true,
     }),
