@@ -28,3 +28,13 @@ export function resolveBondAdminPrivateKey(): string {
   }
   return key;
 }
+
+export function resolveSignerPrivateKey(): string {
+  const key = process.env.POX5_SIGNER_PRIVATE_KEY || process.env.POX5_STX_PRIVATE_KEY;
+  if (!key) {
+    throw new CliError(
+      'no signer key set — set POX5_SIGNER_PRIVATE_KEY (or POX5_STX_PRIVATE_KEY) to sign the signer-key grant',
+    );
+  }
+  return key;
+}

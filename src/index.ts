@@ -16,6 +16,9 @@ import { signerCommand } from './commands/signer.js';
 import { signersCommand } from './commands/signers.js';
 import { stakeCommand } from './commands/stake.js';
 import { setupBondCommand, type AllowEntry } from './commands/setup-bond.js';
+import { setupSignerCommand } from './commands/setup-signer.js';
+import { lockBtcCommand, type UtxoRef } from './commands/lock-btc.js';
+import { registerForBondCommand } from './commands/register-for-bond.js';
 import { faucetBtcCommand, faucetStxCommand } from './commands/faucet.js';
 import { keygenCommand, BTC_NETWORK_NAMES, type BtcNetworkName } from './commands/keygen.js';
 
@@ -82,7 +85,7 @@ const program = new Command();
 
 program
   .name('pox5')
-  .description('CLI for the Stacks PoX-5 (Bitcoin Staking) internal testnet — read-only')
+  .description('CLI for the Stacks PoX-5 (Bitcoin Staking) internal testnet')
   .version('0.1.0')
   .option('--json', 'output machine-readable JSON')
   .option('--api-url <url>', 'Stacks core-node RPC base URL')
@@ -221,6 +224,82 @@ program
       earlyUnlockBytesHex: o.earlyUnlockBytes,
       earlyUnlockAdmin: o.earlyUnlockAdmin,
       allowlist: o.allow ?? [],
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    }),
+  );
+
+const collectUtxos = (v: string, acc: UtxoRef[] = []): UtxoRef[] => {
+  for (const item of v.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const sep = item.lastIndexOf(':');
+    if (sep < 0) throw new CliError(`--utxo must be <txid>:<vout> (got "${item}")`);
+    const txid = item.slice(0, sep).trim().replace(/^0x/, '');
+    const voutStr = item.slice(sep + 1).trim();
+    if (!/^[0-9a-fA-F]{64}$/.test(txid)) throw new CliError(`--utxo txid must be 32 hex bytes (got "${txid}")`);
+    const vout = Number(voutStr);
+    if (!Number.isInteger(vout) || vout < 0) throw new CliError(`--utxo vout must be a non-negative integer (got "${voutStr}")`);
+    acc.push({ txid: txid.toLowerCase(), vout });
+  }
+  return acc;
+};
+
+program
+  .command('setup-signer')
+  .description('deploy and register a minimal signer-manager contract under the sender; dry run unless --broadcast')
+  .option('--name <contractName>', 'contract name to deploy under the sender', 'signer-manager')
+  .option('--auth-id <n>', 'signer-key grant auth id (default: 1)', intArg('--auth-id'))
+  .option('--deploy-fee <ustx>', 'deploy transaction fee in microSTX (default: 100000)', bigIntArg('--deploy-fee'))
+  .option('--fee <ustx>', 'register transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
+  .action(async (o, cmd) =>
+    setupSignerCommand(ctxOf(cmd), {
+      name: o.name,
+      authId: o.authId ?? 1,
+      deployFee: o.deployFee ?? 100000n,
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    }),
+  );
+
+program
+  .command('lock-btc')
+  .description('fund a bond’s Bitcoin timelock from POX5_BTC_WIF; dry run unless --broadcast')
+  .requiredOption('--bond <index>', 'bond index to lock for', intArg('--bond'))
+  .option('--sats <n>', 'BTC commitment in sats', bigIntArg('--sats'))
+  .option('--btc <n>', 'BTC commitment in BTC', floatArg('--btc'))
+  .requiredOption('--utxo <txid:vout>', 'UTXO to spend (repeatable, comma-separated)', collectUtxos)
+  .option('--btc-fee <sats>', 'Bitcoin transaction fee in sats (default: 1000)', bigIntArg('--btc-fee'))
+  .option('--btc-network <name>', `BTC address network: ${BTC_NETWORK_NAMES.join(' | ')}`, 'regtest')
+  .option('--broadcast', 'sign with POX5_BTC_WIF and broadcast to Bitcoin (default: dry run)')
+  .action(async (o, cmd) =>
+    lockBtcCommand(ctxOf(cmd), {
+      bond: o.bond,
+      sats: o.sats,
+      btc: o.btc,
+      utxos: o.utxo,
+      btcFee: o.btcFee ?? 1000n,
+      btcNetwork: o.btcNetwork as BtcNetworkName,
+      broadcast: o.broadcast === true,
+    }),
+  );
+
+program
+  .command('register-for-bond')
+  .description('register a confirmed Bitcoin lock for a bond with an SPV proof (paired BTC); dry run unless --broadcast')
+  .requiredOption('--bond <index>', 'bond index to register for', intArg('--bond'))
+  .requiredOption('--btc-txid <txid>', 'Bitcoin transaction that funded the lock (see lock-btc)')
+  .option('--signer-manager <principal>', 'signer-manager to route through (default: <sender>.signer-manager)')
+  .option('--amount <stx>', 'paired STX to lock (default: the bond minimum for the locked sats)', stxArg('--amount'))
+  .option('--btc-network <name>', `BTC address network: ${BTC_NETWORK_NAMES.join(' | ')}`, 'regtest')
+  .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
+  .action(async (o, cmd) =>
+    registerForBondCommand(ctxOf(cmd), {
+      bond: o.bond,
+      btcTxid: (o.btcTxid as string).replace(/^0x/, '').toLowerCase(),
+      signerManager: o.signerManager,
+      amountUstx: o.amount,
+      btcNetwork: o.btcNetwork as BtcNetworkName,
       fee: o.fee ?? 10000n,
       broadcast: o.broadcast === true,
     }),

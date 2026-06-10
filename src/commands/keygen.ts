@@ -1,28 +1,10 @@
 import { getAddressFromPrivateKey, privateKeyToPublic, randomPrivateKey } from '@stacks/transactions';
 import * as btc from '@scure/btc-signer';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { btcNetwork, BTC_NETWORK_NAMES, type BtcNetworkName } from '../btc.js';
 import { output, printRows, printSection } from '../output.js';
 
-export type BtcNetworkName = 'regtest' | 'testnet' | 'signet' | 'mainnet';
-
-export const BTC_NETWORK_NAMES: BtcNetworkName[] = ['regtest', 'testnet', 'signet', 'mainnet'];
-
-const REGTEST = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef };
-
-function btcNetwork(name: BtcNetworkName): typeof btc.NETWORK {
-  switch (name) {
-    case 'mainnet':
-      return btc.NETWORK;
-    case 'testnet':
-    case 'signet':
-      return btc.TEST_NETWORK;
-    case 'regtest':
-      return REGTEST;
-    default:
-      throw new CliError(`unknown btc network "${name}" (expected ${BTC_NETWORK_NAMES.join(' | ')})`);
-  }
-}
+export { BTC_NETWORK_NAMES, type BtcNetworkName };
 
 export interface KeygenOpts {
   btcNetwork: BtcNetworkName;
