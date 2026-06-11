@@ -21,7 +21,7 @@ import { lockBtcCommand, type UtxoRef } from './commands/lock-btc.js';
 import { registerForBondCommand } from './commands/register-for-bond.js';
 import { earlyExitCommand } from './commands/early-exit.js';
 import { unlockScriptCommand } from './commands/unlock-script.js';
-import { faucetBtcCommand, faucetStxCommand } from './commands/faucet.js';
+import { faucetBtcCommand, faucetSbtcCommand, faucetStxCommand } from './commands/faucet.js';
 import { keygenCommand, BTC_NETWORK_NAMES, type BtcNetworkName } from './commands/keygen.js';
 
 process.stdout.on('error', (err: NodeJS.ErrnoException) => {
@@ -356,6 +356,24 @@ faucet
   .option('--large', '0.01 BTC')
   .option('--xlarge', '0.5 BTC')
   .action(async (address, o, cmd) => faucetBtcCommand(ctxOf(cmd), address, { large: o.large, xlarge: o.xlarge }));
+faucet
+  .command('sbtc')
+  .description('mint sBTC via the deployer-owned sbtc-deposit minter (default: 1 sBTC); dry run unless --broadcast')
+  .argument('[stxAddress]', 'recipient principal (default: POX5_STX_ADDRESS)')
+  .option('--sbtc <n>', 'amount in sBTC (default: 1)', floatArg('--sbtc'))
+  .option('--sats <n>', 'amount in base units (overrides --sbtc)', bigIntArg('--sats'))
+  .option('--deploy-fee <ustx>', 'minter deploy fee in microSTX (default: 100000)', bigIntArg('--deploy-fee'))
+  .option('--fee <ustx>', 'mint transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with the sBTC deployer key and broadcast (default: dry run)')
+  .action(async (address, o, cmd) =>
+    faucetSbtcCommand(ctxOf(cmd), address, {
+      sats: o.sats,
+      sbtc: o.sbtc,
+      deployFee: o.deployFee ?? 100000n,
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    }),
+  );
 
 program
   .command('keygen')

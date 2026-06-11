@@ -5,11 +5,12 @@ import { explorerLink } from '../explorer.js';
 import { bitcoinBlocks, dim, link, output, printRows, printSection, stx, type Row } from '../output.js';
 
 export async function infoCommand(ctx: Ctx): Promise<void> {
-  const [pox, poxRead, nextCycle, bitcoinBlockSeconds] = await Promise.all([
+  const [pox, poxRead, nextCycle, bitcoinBlockSeconds, sbtcContract] = await Promise.all([
     fetchPoxInfo(ctx.net),
     callPoxReadOnly(ctx, 'get-pox-info', []),
     fetchNextCycleBlocks(ctx),
     estimateBitcoinBlockSeconds(ctx),
+    fetchSbtcContract(ctx),
   ]);
   const stakingMinUstx = (poxRead as { value: { value: Record<string, { value: bigint }> } }).value.value[
     'min-amount-ustx'
@@ -28,6 +29,7 @@ export async function infoCommand(ctx: Ctx): Promise<void> {
     ctx,
     {
       contractId: pox.contractId,
+      sbtcContract: sbtcContract ?? null,
       bitcoinBlockHeight: bitcoinHeight,
       firstBitcoinBlockHeight: pox.firstBurnchainBlockHeight,
       rewardCycleId: pox.rewardCycleId,
@@ -54,6 +56,7 @@ export async function infoCommand(ctx: Ctx): Promise<void> {
       printSection('Network');
       printRows([
         ['contract', explorerLink(ctx.config, pox.contractId)],
+        ['sBTC token', sbtcContract ? explorerLink(ctx.config, sbtcContract) : null],
         ['baseUrl', link(ctx.config.stacksApiUrl, ctx.config.stacksApiUrl)],
         ['chainId', ctx.config.network.chainId],
       ]);
@@ -100,6 +103,17 @@ export async function infoCommand(ctx: Ctx): Promise<void> {
       printRows([...cycleRows('current', pox.currentCycle), ...cycleRows('next', pox.nextCycle)]);
     },
   );
+}
+
+async function fetchSbtcContract(ctx: Ctx): Promise<string | undefined> {
+  try {
+    const res = await fetch(`${ctx.config.stacksApiUrl}/v2/contracts/source/${ctx.net.network.bootAddress}/pox-5?proof=0`);
+    if (!res.ok) return undefined;
+    const src = ((await res.json()) as { source?: string }).source;
+    return src?.match(/'(S[0-9A-Z]+\.sbtc-token)/)?.[1];
+  } catch {
+    return undefined;
+  }
 }
 
 async function fetchNextCycleBlocks(ctx: Ctx): Promise<{ untilPrepare?: number; untilReward?: number }> {

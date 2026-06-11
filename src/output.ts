@@ -88,6 +88,10 @@ export function sats(value: bigint): string {
   return `${group(value.toString())} sats (${formatUnits(value, 8, 'BTC')})`;
 }
 
+export function sbtc(value: bigint): string {
+  return `${group(value.toString())} (${formatUnits(value, 8, 'sBTC')})`;
+}
+
 export function bps(value: number | bigint): string {
   return `${(Number(value) / 100).toFixed(2)}% (${value} bps)`;
 }

@@ -38,3 +38,10 @@ export function resolveSignerPrivateKey(): string {
   }
   return key;
 }
+
+const DEFAULT_SBTC_DEPLOYER_PRIVATE_KEY =
+  '6a1a754ba863d7bab14adbbc3f8ebb090af9e871ace621d3e5ab634e1422885e01';
+
+export function resolveSbtcDeployerPrivateKey(): string {
+  return process.env.POX5_SBTC_DEPLOYER_PRIVATE_KEY || DEFAULT_SBTC_DEPLOYER_PRIVATE_KEY;
+}
