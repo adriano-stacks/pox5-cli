@@ -4,6 +4,7 @@ import { hexToBytes } from '@stacks/common';
 import {
   ClarityType,
   bufferCV,
+  cvToString,
   fetchCallReadOnlyFunction,
   principalCV,
   uintCV,
@@ -48,6 +49,27 @@ export async function fetchBondConfig(ctx: Ctx, bondIndex: number): Promise<Bond
     stxValueRatio: (f['stx-value-ratio'] as { value: bigint }).value,
     minUstxRatioBps: Number((f['min-ustx-ratio'] as { value: bigint }).value),
     earlyUnlockBytes: (f['early-unlock-bytes'] as { value: string }).value,
+  };
+}
+
+export interface BondMembership {
+  bondIndex: number;
+  amountUstx: bigint;
+  signer: string;
+  isL1Lock: boolean;
+  amountSats: bigint;
+}
+
+export async function fetchBondMembershipFull(ctx: Ctx, staker: string): Promise<BondMembership | undefined> {
+  const result = await callPoxReadOnly(ctx, 'get-bond-membership', [principalCV(staker)]);
+  if (result.type !== ClarityType.OptionalSome) return undefined;
+  const f = (result.value as { value: Record<string, ClarityValue> }).value;
+  return {
+    bondIndex: Number((f['bond-index'] as { value: bigint }).value),
+    amountUstx: (f['amount-ustx'] as { value: bigint }).value,
+    signer: cvToString(f['signer']!),
+    isL1Lock: f['is-l1-lock']!.type === ClarityType.BoolTrue,
+    amountSats: (f['amount-sats'] as { value: bigint }).value,
   };
 }
 

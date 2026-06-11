@@ -20,6 +20,7 @@ import { setupSignerCommand } from './commands/setup-signer.js';
 import { lockBtcCommand, type UtxoRef } from './commands/lock-btc.js';
 import { registerForBondCommand } from './commands/register-for-bond.js';
 import { stakeSbtcCommand } from './commands/stake-sbtc.js';
+import { unstakeSbtcCommand } from './commands/unstake-sbtc.js';
 import { earlyExitCommand } from './commands/early-exit.js';
 import { unlockScriptCommand } from './commands/unlock-script.js';
 import { faucetBtcCommand, faucetSbtcCommand, faucetStxCommand } from './commands/faucet.js';
@@ -331,6 +332,27 @@ program
       amountSats,
       signerManager: o.signerManager,
       amountUstx: o.amount,
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    });
+  });
+
+program
+  .command('unstake-sbtc')
+  .description('withdraw some or all staked sBTC from your active bond (sBTC stakes only); dry run unless --broadcast')
+  .option('--sats <n>', 'sBTC to withdraw in base units (sats)', bigIntArg('--sats'))
+  .option('--sbtc <n>', 'sBTC to withdraw in whole sBTC', floatArg('--sbtc'))
+  .option('--signer-manager <principal>', 'signer-manager to route through (default: the membership signer)')
+  .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
+  .action(async (o, cmd) => {
+    let amountSats: bigint;
+    if (o.sats !== undefined) amountSats = o.sats;
+    else if (o.sbtc !== undefined) amountSats = BigInt(Math.round(o.sbtc * 1e8));
+    else throw new CliError('specify the sBTC amount with --sats or --sbtc');
+    return unstakeSbtcCommand(ctxOf(cmd), {
+      amountSats,
+      signerManager: o.signerManager,
       fee: o.fee ?? 10000n,
       broadcast: o.broadcast === true,
     });
