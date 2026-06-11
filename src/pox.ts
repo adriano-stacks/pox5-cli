@@ -67,6 +67,44 @@ export async function fetchLockupOutputScript(
   return result.value.replace(/^0x/, '');
 }
 
+export async function fetchSbtcContractId(ctx: Ctx): Promise<string | undefined> {
+  try {
+    const res = await fetch(
+      `${ctx.config.stacksApiUrl}/v2/contracts/source/${ctx.net.network.bootAddress}/pox-5?proof=0`,
+    );
+    if (!res.ok) return undefined;
+    const src = ((await res.json()) as { source?: string }).source;
+    return src?.match(/'(S[0-9A-Z]+\.sbtc-token)/)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+export async function fetchSbtcBalance(
+  ctx: Ctx,
+  address: string,
+): Promise<{ contractId: string; balance: bigint } | undefined> {
+  const contractId = await fetchSbtcContractId(ctx);
+  if (!contractId) return undefined;
+  const [contractAddress, contractName] = contractId.split('.');
+  try {
+    const result = await fetchCallReadOnlyFunction({
+      contractAddress: contractAddress!,
+      contractName: contractName!,
+      functionName: 'get-balance',
+      functionArgs: [principalCV(address)],
+      senderAddress: ctx.net.network.bootAddress,
+      ...ctx.net,
+    });
+    if (result.type !== ClarityType.ResponseOk) return undefined;
+    const inner = (result as { value: ClarityValue }).value;
+    if (inner.type !== ClarityType.UInt) return undefined;
+    return { contractId, balance: (inner as { value: bigint }).value };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function fetchHasAnnouncedL1EarlyExit(
   ctx: Ctx,
   opts: { bondIndex: number; staker: string },

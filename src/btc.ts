@@ -92,6 +92,26 @@ export async function fetchBlockHashAtHeight(config: Config, height: number): Pr
   }
 }
 
+export async function fetchBtcBalanceSats(config: Config, address: string): Promise<bigint | undefined> {
+  let body: string;
+  try {
+    body = await esplora(config, `/address/${address}`);
+  } catch {
+    return undefined;
+  }
+  try {
+    const d = JSON.parse(body) as {
+      chain_stats?: { funded_txo_sum?: number; spent_txo_sum?: number };
+      mempool_stats?: { funded_txo_sum?: number; spent_txo_sum?: number };
+    };
+    const net = (s?: { funded_txo_sum?: number; spent_txo_sum?: number }): bigint =>
+      BigInt(s?.funded_txo_sum ?? 0) - BigInt(s?.spent_txo_sum ?? 0);
+    return net(d.chain_stats) + net(d.mempool_stats);
+  } catch {
+    return undefined;
+  }
+}
+
 export async function broadcastBtcTx(config: Config, txHex: string): Promise<string> {
   const url = `${config.bitcoinApiUrl}/tx`;
   let res: Response;

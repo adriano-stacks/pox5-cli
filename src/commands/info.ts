@@ -1,6 +1,6 @@
 import { currentDistributionCycle, fetchPoxInfo, isInPreparePhase } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
-import { callPoxReadOnly, resolveFirstPox5Cycle } from '../pox.js';
+import { callPoxReadOnly, fetchSbtcContractId, resolveFirstPox5Cycle } from '../pox.js';
 import { explorerLink } from '../explorer.js';
 import { bitcoinBlocks, dim, link, output, printRows, printSection, stx, type Row } from '../output.js';
 
@@ -10,7 +10,7 @@ export async function infoCommand(ctx: Ctx): Promise<void> {
     callPoxReadOnly(ctx, 'get-pox-info', []),
     fetchNextCycleBlocks(ctx),
     estimateBitcoinBlockSeconds(ctx),
-    fetchSbtcContract(ctx),
+    fetchSbtcContractId(ctx),
   ]);
   const stakingMinUstx = (poxRead as { value: { value: Record<string, { value: bigint }> } }).value.value[
     'min-amount-ustx'
@@ -103,17 +103,6 @@ export async function infoCommand(ctx: Ctx): Promise<void> {
       printRows([...cycleRows('current', pox.currentCycle), ...cycleRows('next', pox.nextCycle)]);
     },
   );
-}
-
-async function fetchSbtcContract(ctx: Ctx): Promise<string | undefined> {
-  try {
-    const res = await fetch(`${ctx.config.stacksApiUrl}/v2/contracts/source/${ctx.net.network.bootAddress}/pox-5?proof=0`);
-    if (!res.ok) return undefined;
-    const src = ((await res.json()) as { source?: string }).source;
-    return src?.match(/'(S[0-9A-Z]+\.sbtc-token)/)?.[1];
-  } catch {
-    return undefined;
-  }
 }
 
 async function fetchNextCycleBlocks(ctx: Ctx): Promise<{ untilPrepare?: number; untilReward?: number }> {
