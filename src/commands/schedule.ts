@@ -19,13 +19,16 @@ export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void
   const active = isBondActiveAtHeight({ bondIndex, burnHeight: now, poxInfo: pox });
   const inPrepare = isInPreparePhase({ burnHeight: now, poxInfo: pox });
 
-  const phases = ranges.map((r) => ({
-    name: r.name,
-    startBitcoinBlockHeight: r.startBurnHeight,
-    endBitcoinBlockHeight: r.endBurnHeight,
-    lengthBlocks: r.length,
-    blocksUntilStart: Math.max(0, r.startBurnHeight - now),
-  }));
+  const phases = ranges.map((r) => {
+    const terminal = r.name === 'closed';
+    return {
+      name: r.name,
+      startBitcoinBlockHeight: r.startBurnHeight,
+      endBitcoinBlockHeight: terminal ? null : r.endBurnHeight,
+      lengthBlocks: terminal ? null : r.length,
+      blocksUntilStart: Math.max(0, r.startBurnHeight - now),
+    };
+  });
 
   output(
     ctx,
@@ -50,9 +53,11 @@ export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void
       const width = phases.reduce((m, p) => Math.max(m, p.name.length), 0);
       for (const p of phases) {
         const until = p.blocksUntilStart > 0 ? `  (in ${bitcoinBlocks(p.blocksUntilStart)})` : '';
-        process.stdout.write(
-          `  ${p.name.padEnd(width)}  ${p.startBitcoinBlockHeight} → ${p.endBitcoinBlockHeight}  [${bitcoinBlocks(p.lengthBlocks)}]${until}\n`,
-        );
+        const span =
+          p.lengthBlocks === null
+            ? `at ${p.startBitcoinBlockHeight}`
+            : `${p.startBitcoinBlockHeight} → ${p.endBitcoinBlockHeight}  [${bitcoinBlocks(p.lengthBlocks)}]`;
+        process.stdout.write(`  ${p.name.padEnd(width)}  ${span}${until}\n`);
       }
     },
   );
