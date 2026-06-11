@@ -19,6 +19,7 @@ import { setupBondCommand, type AllowEntry } from './commands/setup-bond.js';
 import { setupSignerCommand } from './commands/setup-signer.js';
 import { lockBtcCommand, type UtxoRef } from './commands/lock-btc.js';
 import { registerForBondCommand } from './commands/register-for-bond.js';
+import { earlyExitCommand } from './commands/early-exit.js';
 import { unlockScriptCommand } from './commands/unlock-script.js';
 import { faucetBtcCommand, faucetStxCommand } from './commands/faucet.js';
 import { keygenCommand, BTC_NETWORK_NAMES, type BtcNetworkName } from './commands/keygen.js';
@@ -305,6 +306,38 @@ program
       amountUstx: o.amount,
       btcNetwork: o.btcNetwork as BtcNetworkName,
       fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    }),
+  );
+
+const utxoArg = (name: string) => (v: string): UtxoRef => {
+  const refs = collectUtxos(v);
+  if (refs.length !== 1) throw new CliError(`${name} must be a single <txid>:<vout> (got ${refs.length})`);
+  return refs[0]!;
+};
+
+program
+  .command('early-exit')
+  .description('exit a bond early: spend the L1 timelock via its early-exit branch and announce it on L2; dry run unless --broadcast')
+  .requiredOption('--bond <index>', 'bond index to exit', intArg('--bond'))
+  .option('--utxo <txid:vout>', 'the lock-btc output to spend on Bitcoin (omit to only announce on L2)', utxoArg('--utxo'))
+  .option('--to <btcAddress>', 'where to send the recovered BTC (default: POX5_BTC_WIF address)')
+  .option('--btc-fee <sats>', 'Bitcoin transaction fee in sats (default: 1000)', bigIntArg('--btc-fee'))
+  .option('--btc-network <name>', `BTC address network: ${BTC_NETWORK_NAMES.join(' | ')}`, 'regtest')
+  .option('--signer-manager <principal>', 'old signer-manager for the announce (default: the membership signer)')
+  .option('--fee <ustx>', 'announce transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--no-announce', 'skip the L2 announce-l1-early-exit (only spend the L1 lock)')
+  .option('--broadcast', 'broadcast the Bitcoin spend and/or sign the announce with POX5_STX_PRIVATE_KEY (default: dry run)')
+  .action(async (o, cmd) =>
+    earlyExitCommand(ctxOf(cmd), {
+      bond: o.bond,
+      utxo: o.utxo,
+      to: o.to,
+      btcFee: o.btcFee ?? 1000n,
+      btcNetwork: o.btcNetwork as BtcNetworkName,
+      signerManager: o.signerManager,
+      fee: o.fee ?? 10000n,
+      announce: o.announce !== false,
       broadcast: o.broadcast === true,
     }),
   );

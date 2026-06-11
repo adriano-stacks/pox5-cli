@@ -67,6 +67,17 @@ export async function fetchLockupOutputScript(
   return result.value.replace(/^0x/, '');
 }
 
+export async function fetchHasAnnouncedL1EarlyExit(
+  ctx: Ctx,
+  opts: { bondIndex: number; staker: string },
+): Promise<boolean> {
+  const result = await callPoxReadOnly(ctx, 'has-announced-l1-early-exit', [
+    uintCV(opts.bondIndex),
+    principalCV(opts.staker),
+  ]);
+  return result.type === ClarityType.BoolTrue;
+}
+
 export function resolveFirstPox5Cycle(ctx: Ctx, pox: PoxInfo): number | undefined {
   return firstPox5RewardCycle(pox) ?? ctx.config.firstPox5Cycle;
 }

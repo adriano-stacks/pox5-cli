@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as btc from '@scure/btc-signer';
+import { signECDSA } from '@scure/btc-signer/utils.js';
 import { pushCScriptNum, toConsensusBuffStandardPrincipal } from '@stacks/bitcoin-staking';
 import { bytesToHex, hexToBytes } from '@stacks/common';
 import { privateKeyToPublic, publicKeyToHex } from '@stacks/transactions';
@@ -134,6 +135,65 @@ export function buildLockupScript(opts: {
     offset += p.length;
   }
   return out;
+}
+
+export function stakerCommitmentPreimage(stxAddress: string): Uint8Array {
+  return sha256(toConsensusBuffStandardPrincipal(stxAddress));
+}
+
+export interface SingleKeyEarlyUnlock {
+  publicKey: string;
+  needsFiller: boolean;
+}
+
+export function parseSingleKeyEarlyUnlock(earlyUnlockBytesHex: string): SingleKeyEarlyUnlock | undefined {
+  const m = /^21([0-9a-f]{66})(ac|ad)$/.exec(earlyUnlockBytesHex.toLowerCase());
+  if (!m) return undefined;
+  return { publicKey: m[1]!, needsFiller: m[2] === 'ad' };
+}
+
+export interface EarlyExitSpend {
+  txid: string;
+  txHex: string;
+  outputSats: bigint;
+}
+
+export function buildEarlyExitSpend(opts: {
+  lockTxid: string;
+  lockVout: number;
+  lockAmount: bigint;
+  lockScriptPubKey: Uint8Array;
+  witnessScript: Uint8Array;
+  preimage: Uint8Array;
+  needsFiller: boolean;
+  privateKey: Uint8Array;
+  to: string;
+  feeSats: bigint;
+  network: typeof btc.NETWORK;
+}): EarlyExitSpend {
+  const outputSats = opts.lockAmount - opts.feeSats;
+  const tx = new btc.Transaction({ allowUnknownInputs: true });
+  tx.addInput({
+    txid: opts.lockTxid,
+    index: opts.lockVout,
+    witnessUtxo: { script: opts.lockScriptPubKey, amount: opts.lockAmount },
+  });
+  tx.addOutputAddress(opts.to, outputSats, opts.network);
+
+  const sighash = tx.preimageWitnessV0(0, opts.witnessScript, btc.SigHash.ALL, opts.lockAmount);
+  const sig = new Uint8Array([...signECDSA(sighash, opts.privateKey), btc.SigHash.ALL]);
+
+  // OP_ELSE branch witness, bottom->top (last item is the witnessScript). The shared OP_VERIFY
+  // after OP_ENDIF needs a truthy item: a CHECKSIGVERIFY (ad) early-unlock leaves nothing, so a
+  // 0x01 filler is inserted below the early-unlock signature; a CHECKSIG (ac) leaves its own
+  // boolean and needs no filler. Both signature slots are the same key over the same sighash.
+  const empty = new Uint8Array(0);
+  const witness = opts.needsFiller
+    ? [sig, Uint8Array.of(0x01), sig, opts.preimage, empty, opts.witnessScript]
+    : [sig, sig, opts.preimage, empty, opts.witnessScript];
+  tx.updateInput(0, { finalScriptWitness: witness }, true);
+
+  return { txid: tx.id, txHex: tx.hex, outputSats };
 }
 
 export interface ParsedOutput {
