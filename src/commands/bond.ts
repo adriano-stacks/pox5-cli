@@ -36,7 +36,9 @@ interface FillBreakdown {
   truncated: boolean;
   earlyExitedSats: bigint;
   earlyExitParticipants: number;
-  byStaker: Map<string, { sats: bigint; isL1: boolean; earlyExitedSats: bigint }>;
+  unstakedSats: bigint;
+  unstakeParticipants: number;
+  byStaker: Map<string, { sats: bigint; isL1: boolean; earlyExitedSats: bigint; unstakedSats: bigint }>;
 }
 
 function phaseAt(burnHeight: number, pox: PoxInfo, bondIndex: number): BondPhaseName | 'pre-announce' | 'ended' {
@@ -72,6 +74,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       allocationSats: await fetchBondAllowance({ bondIndex, address, ...ctx.net }),
       filledSats: fill.byStaker.get(address)?.sats ?? 0n,
       earlyExitedSats: fill.byStaker.get(address)?.earlyExitedSats ?? 0n,
+      unstakedSats: fill.byStaker.get(address)?.unstakedSats ?? 0n,
     })),
   );
 
@@ -113,6 +116,8 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       participants: fill.participants,
       earlyExitedSats: fill.earlyExitedSats,
       earlyExitParticipants: fill.earlyExitParticipants,
+      unstakedSats: fill.unstakedSats,
+      unstakeParticipants: fill.unstakeParticipants,
       capacitySats: capacitySats ?? null,
       allowlist: allowlist ?? null,
       allowlistTruncated: allowlistTruncated || undefined,
@@ -139,11 +144,16 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
         const n = fill.earlyExitParticipants;
         rows.push(['early-exited (L1)', `${sats(fill.earlyExitedSats)} — ${n} staker${n === 1 ? '' : 's'}`]);
       }
+      if (fill.unstakedSats > 0n) {
+        const n = fill.unstakeParticipants;
+        rows.push(['unstaked (sBTC)', `${sats(fill.unstakedSats)} — ${n} staker${n === 1 ? '' : 's'}`]);
+      }
       for (const a of allowances) {
         rows.push(['allowance', explorerLink(ctx.config, a.address)]);
         rows.push(['  allocation', sats(a.allocationSats)]);
         rows.push(['  filled', `${sats(a.filledSats)} — ${percent(a.filledSats, a.allocationSats)} of allocation`]);
         if (a.earlyExitedSats > 0n) rows.push(['  early-exited', sats(a.earlyExitedSats)]);
+        if (a.unstakedSats > 0n) rows.push(['  unstaked', sats(a.unstakedSats)]);
       }
       printRows(rows);
       if (splitSum !== filledSbtc) {
@@ -225,33 +235,51 @@ async function scanBondFill(ctx: Ctx, bondIndex: number): Promise<FillBreakdown>
     }
   }
 
-  const byStaker = new Map<string, { sats: bigint; isL1: boolean; earlyExitedSats: bigint }>();
+  const byStaker = new Map<string, { sats: bigint; isL1: boolean; earlyExitedSats: bigint; unstakedSats: bigint }>();
   let btcSats = 0n;
   let sbtcSats = 0n;
   let participants = 0;
   let earlyExitedSats = 0n;
   let earlyExitParticipants = 0;
+  let unstakedSats = 0n;
+  let unstakeParticipants = 0;
   for (const [staker, reg] of registered) {
     let current: bigint;
     let exited = 0n;
+    let unstaked = 0n;
     if (reg.isL1) {
       const released = l1Released.get(staker) ?? 0n;
       exited = released > reg.sats ? reg.sats : released;
       current = reg.sats - exited;
     } else {
       current = sbtcRemaining.has(staker) ? sbtcRemaining.get(staker)! : reg.sats;
+      unstaked = reg.sats > current ? reg.sats - current : 0n;
     }
-    byStaker.set(staker, { sats: current, isL1: reg.isL1, earlyExitedSats: exited });
+    byStaker.set(staker, { sats: current, isL1: reg.isL1, earlyExitedSats: exited, unstakedSats: unstaked });
     if (exited > 0n) {
       earlyExitedSats += exited;
       earlyExitParticipants += 1;
+    }
+    if (unstaked > 0n) {
+      unstakedSats += unstaked;
+      unstakeParticipants += 1;
     }
     if (current <= 0n) continue;
     participants += 1;
     if (reg.isL1) btcSats += current;
     else sbtcSats += current;
   }
-  return { btcSats, sbtcSats, participants, truncated, earlyExitedSats, earlyExitParticipants, byStaker };
+  return {
+    btcSats,
+    sbtcSats,
+    participants,
+    truncated,
+    earlyExitedSats,
+    earlyExitParticipants,
+    unstakedSats,
+    unstakeParticipants,
+    byStaker,
+  };
 }
 
 function tupleFields(hex: string | undefined): Record<string, ClarityValue> | undefined {
