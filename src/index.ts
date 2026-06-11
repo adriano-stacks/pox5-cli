@@ -19,6 +19,7 @@ import { setupBondCommand, type AllowEntry } from './commands/setup-bond.js';
 import { setupSignerCommand } from './commands/setup-signer.js';
 import { lockBtcCommand, type UtxoRef } from './commands/lock-btc.js';
 import { registerForBondCommand } from './commands/register-for-bond.js';
+import { stakeSbtcCommand } from './commands/stake-sbtc.js';
 import { earlyExitCommand } from './commands/early-exit.js';
 import { unlockScriptCommand } from './commands/unlock-script.js';
 import { faucetBtcCommand, faucetSbtcCommand, faucetStxCommand } from './commands/faucet.js';
@@ -309,6 +310,31 @@ program
       broadcast: o.broadcast === true,
     }),
   );
+
+program
+  .command('stake-sbtc')
+  .description('stake sBTC into a bond (no L1 lock — the contract custodies the sBTC); dry run unless --broadcast')
+  .requiredOption('--bond <index>', 'bond index to stake into', intArg('--bond'))
+  .option('--sats <n>', 'sBTC to stake in base units (sats)', bigIntArg('--sats'))
+  .option('--sbtc <n>', 'sBTC to stake in whole sBTC', floatArg('--sbtc'))
+  .option('--signer-manager <principal>', 'signer-manager to route through (default: <sender>.signer-manager)')
+  .option('--amount <stx>', 'paired STX to lock (default: the bond minimum for the staked sats)', stxArg('--amount'))
+  .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
+  .action(async (o, cmd) => {
+    let amountSats: bigint;
+    if (o.sats !== undefined) amountSats = o.sats;
+    else if (o.sbtc !== undefined) amountSats = BigInt(Math.round(o.sbtc * 1e8));
+    else throw new CliError('specify the sBTC amount with --sats or --sbtc');
+    return stakeSbtcCommand(ctxOf(cmd), {
+      bond: o.bond,
+      amountSats,
+      signerManager: o.signerManager,
+      amountUstx: o.amount,
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    });
+  });
 
 const utxoArg = (name: string) => (v: string): UtxoRef => {
   const refs = collectUtxos(v);
