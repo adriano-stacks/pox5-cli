@@ -1,9 +1,10 @@
 import {
   bondPeriodToBurnHeight,
   bondPeriodToRewardCycle,
+  buildDefaultUnlockScript,
   fetchPoxInfo,
 } from '@stacks/bitcoin-staking';
-import { hexToBytes } from '@stacks/common';
+import { bytesToHex, hexToBytes } from '@stacks/common';
 import {
   TransactionSigner,
   broadcastTransaction,
@@ -40,16 +41,25 @@ export interface SetupBondOpts {
   targetRateBps: number;
   stxValueRatio: bigint;
   minUstxRatioBps: number;
-  earlyUnlockBytesHex: string;
+  earlyUnlockBytesHex?: string;
   allowlist: AllowEntry[];
   fee: bigint;
   broadcast: boolean;
+}
+
+function compressedPublicKey(privateKey: string): string {
+  const key = privateKey.length === 64 ? privateKey + '01' : privateKey;
+  return publicKeyToHex(privateKeyToPublic(key));
 }
 
 export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<void> {
   const privateKey = resolveBondAdminPrivateKey();
   const sender = getAddressFromPrivateKey(privateKey, ctx.net.network);
   const publicKey = publicKeyToHex(privateKeyToPublic(privateKey));
+
+  const earlyUnlockDefaulted = opts.earlyUnlockBytesHex === undefined;
+  const earlyUnlockBytesHex =
+    opts.earlyUnlockBytesHex ?? bytesToHex(buildDefaultUnlockScript(compressedPublicKey(privateKey)));
 
   const poxRaw = await fetchPoxInfo(ctx.net);
   const pox = requirePoxWithBondCycle(ctx, poxRaw);
@@ -84,7 +94,7 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
       uintCV(opts.targetRateBps),
       uintCV(opts.stxValueRatio),
       uintCV(opts.minUstxRatioBps),
-      bufferCV(hexToBytes(opts.earlyUnlockBytesHex)),
+      bufferCV(hexToBytes(earlyUnlockBytesHex)),
       listCV(opts.allowlist.map((e) => tupleCV({ staker: principalCV(e.staker), 'max-sats': uintCV(e.maxSats) }))),
     ],
     publicKey,
@@ -99,7 +109,7 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
     ['target rate', bps(opts.targetRateBps)],
     ['stx value ratio', `${opts.stxValueRatio} uSTX / 100 sats`],
     ['min stx ratio', bps(opts.minUstxRatioBps)],
-    ['early-unlock bytes', `${opts.earlyUnlockBytesHex.length / 2} bytes`],
+    ['early-unlock bytes', `${earlyUnlockBytesHex.length / 2} bytes${earlyUnlockDefaulted ? ' — 21<bond-admin pubkey>ac (OP_CHECKSIG)' : ''}`],
     ['allowlist', allowlistSummary(opts.allowlist, totalAllowSats)],
     ['fee', stx(opts.fee)],
     ['nonce', nonce],
@@ -119,7 +129,8 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
     targetRateBps: opts.targetRateBps,
     stxValueRatio: opts.stxValueRatio,
     minUstxRatioBps: opts.minUstxRatioBps,
-    earlyUnlockBytes: opts.earlyUnlockBytesHex,
+    earlyUnlockBytes: earlyUnlockBytesHex,
+    earlyUnlockDefaulted,
     allowlist: opts.allowlist,
     totalAllowSats,
     firstRewardCycle,
@@ -142,6 +153,9 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
       }
       if (tooSoon) {
         printNote(`setup window opens at Bitcoin height ${windowOpenHeight} (in ${windowOpenHeight - bitcoinHeight} blocks); a broadcast now would be rejected with ERR_CANNOT_SETUP_BOND_TOO_SOON (u2)`);
+      }
+      if (earlyUnlockDefaulted) {
+        printNote('early-unlock-bytes defaulted to the bond-admin key’s OP_CHECKSIG fragment (unlock-script) — pass --early-unlock-bytes to override');
       }
       printNote('re-run with --broadcast to sign with POX5_BOND_ADMIN_PRIVATE_KEY (or POX5_STX_PRIVATE_KEY) and send');
     });

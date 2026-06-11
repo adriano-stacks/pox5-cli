@@ -212,7 +212,7 @@ program
   .requiredOption('--target-rate <bps>', 'target yield APY in basis points', intArg('--target-rate'))
   .requiredOption('--stx-ratio <n>', 'STX:BTC value ratio (uSTX per 100 sats)', bigIntArg('--stx-ratio'))
   .requiredOption('--min-ratio <bps>', 'minimum STX collateral ratio in basis points', intArg('--min-ratio'))
-  .requiredOption('--early-unlock-bytes <hex>', 'Bitcoin early-exit script bytes', hexArg('--early-unlock-bytes', 683))
+  .option('--early-unlock-bytes <hex>', 'Bitcoin early-exit script bytes (default: the bond-admin key’s OP_CHECKSIG unlock fragment, per unlock-script)', hexArg('--early-unlock-bytes', 683))
   .option('--allow <staker:maxSats>', 'allowlist a staker and its max sats (repeatable, comma-separated)', collectAllow)
   .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
   .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
