@@ -1,9 +1,11 @@
 import { firstPox5RewardCycle } from '@stacks/bitcoin-staking';
 import type { PoxInfo } from '@stacks/bitcoin-staking';
+import { hexToBytes } from '@stacks/common';
 import {
   ClarityType,
-  cvToValue,
+  bufferCV,
   fetchCallReadOnlyFunction,
+  principalCV,
   uintCV,
   type ClarityValue,
 } from '@stacks/transactions';
@@ -34,7 +36,6 @@ export interface BondConfig {
   stxValueRatio: bigint;
   minUstxRatioBps: number;
   earlyUnlockBytes: string;
-  earlyUnlockAdmin: string;
 }
 
 export async function fetchBondConfig(ctx: Ctx, bondIndex: number): Promise<BondConfig | undefined> {
@@ -47,8 +48,23 @@ export async function fetchBondConfig(ctx: Ctx, bondIndex: number): Promise<Bond
     stxValueRatio: (f['stx-value-ratio'] as { value: bigint }).value,
     minUstxRatioBps: Number((f['min-ustx-ratio'] as { value: bigint }).value),
     earlyUnlockBytes: (f['early-unlock-bytes'] as { value: string }).value,
-    earlyUnlockAdmin: cvToValue(f['early-unlock-admin']!) as string,
   };
+}
+
+export async function fetchLockupOutputScript(
+  ctx: Ctx,
+  opts: { staker: string; unlockHeight: number; stakerUnlockBytes: Uint8Array; earlyUnlockBytes: string },
+): Promise<string> {
+  const result = await callPoxReadOnly(ctx, 'construct-lockup-output-script', [
+    principalCV(opts.staker),
+    uintCV(opts.unlockHeight),
+    bufferCV(opts.stakerUnlockBytes),
+    bufferCV(hexToBytes(opts.earlyUnlockBytes)),
+  ]);
+  if (result.type !== ClarityType.Buffer) {
+    throw new CliError(`construct-lockup-output-script returned unexpected type ${result.type}`);
+  }
+  return result.value.replace(/^0x/, '');
 }
 
 export function resolveFirstPox5Cycle(ctx: Ctx, pox: PoxInfo): number | undefined {

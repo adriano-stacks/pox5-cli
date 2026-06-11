@@ -1,18 +1,24 @@
 import {
   bondPeriodToBurnHeight,
   bondPeriodToRewardCycle,
-  buildSetupBond,
   fetchPoxInfo,
 } from '@stacks/bitcoin-staking';
+import { hexToBytes } from '@stacks/common';
 import {
   TransactionSigner,
   broadcastTransaction,
+  bufferCV,
   cvToString,
   deserializeCV,
   fetchNonce,
   getAddressFromPrivateKey,
+  listCV,
+  makeUnsignedContractCall,
+  principalCV,
   privateKeyToPublic,
   publicKeyToHex,
+  tupleCV,
+  uintCV,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
@@ -35,7 +41,6 @@ export interface SetupBondOpts {
   stxValueRatio: bigint;
   minUstxRatioBps: number;
   earlyUnlockBytesHex: string;
-  earlyUnlockAdmin: string;
   allowlist: AllowEntry[];
   fee: bigint;
   broadcast: boolean;
@@ -70,14 +75,18 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
   const totalAllowSats = opts.allowlist.reduce((sum, e) => sum + e.maxSats, 0n);
   const nonce = await fetchNonce({ address: sender, ...ctx.net });
 
-  const tx = await buildSetupBond({
-    bondIndex: opts.bondIndex,
-    targetRateBps: opts.targetRateBps,
-    stxValueRatio: opts.stxValueRatio,
-    minUstxRatioBps: opts.minUstxRatioBps,
-    earlyUnlockSigners: opts.earlyUnlockBytesHex,
-    earlyUnlockAdmin: opts.earlyUnlockAdmin,
-    allowlist: opts.allowlist,
+  const tx = await makeUnsignedContractCall({
+    contractAddress: ctx.net.network.bootAddress,
+    contractName: 'pox-5',
+    functionName: 'setup-bond',
+    functionArgs: [
+      uintCV(opts.bondIndex),
+      uintCV(opts.targetRateBps),
+      uintCV(opts.stxValueRatio),
+      uintCV(opts.minUstxRatioBps),
+      bufferCV(hexToBytes(opts.earlyUnlockBytesHex)),
+      listCV(opts.allowlist.map((e) => tupleCV({ staker: principalCV(e.staker), 'max-sats': uintCV(e.maxSats) }))),
+    ],
     publicKey,
     fee: opts.fee,
     nonce,
@@ -90,7 +99,6 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
     ['target rate', bps(opts.targetRateBps)],
     ['stx value ratio', `${opts.stxValueRatio} uSTX / 100 sats`],
     ['min stx ratio', bps(opts.minUstxRatioBps)],
-    ['early-unlock admin', explorerLink(ctx.config, opts.earlyUnlockAdmin)],
     ['early-unlock bytes', `${opts.earlyUnlockBytesHex.length / 2} bytes`],
     ['allowlist', allowlistSummary(opts.allowlist, totalAllowSats)],
     ['fee', stx(opts.fee)],
@@ -112,7 +120,6 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
     stxValueRatio: opts.stxValueRatio,
     minUstxRatioBps: opts.minUstxRatioBps,
     earlyUnlockBytes: opts.earlyUnlockBytesHex,
-    earlyUnlockAdmin: opts.earlyUnlockAdmin,
     allowlist: opts.allowlist,
     totalAllowSats,
     firstRewardCycle,

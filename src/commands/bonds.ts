@@ -13,7 +13,6 @@ interface BondRecord {
   targetRateBps: number;
   stxValueRatio: bigint;
   minUstxRatioBps: number;
-  earlyUnlockAdmin: string;
 }
 
 export async function bondsCommand(ctx: Ctx): Promise<void> {
@@ -90,7 +89,6 @@ function bondFromEventHex(hex: string | undefined): BondRecord | undefined {
     targetRateBps: Number((f['target-rate']! as { value: bigint }).value),
     stxValueRatio: (f['stx-value-ratio']! as { value: bigint }).value,
     minUstxRatioBps: Number((f['min-ustx-ratio']! as { value: bigint }).value),
-    earlyUnlockAdmin: cvToValue(f['early-unlock-admin']!) as string,
   };
 }
 

@@ -20,13 +20,21 @@ const EVENT_PAGE_SIZE = 50;
 const EVENT_MAX_PAGES = 100;
 
 export interface BondOpts {
-  address?: string;
+  addresses?: string[];
   allowlist?: boolean;
 }
 
 interface AllowlistEntry {
   staker: string;
   maxSats: bigint;
+}
+
+interface FillBreakdown {
+  btcSats: bigint;
+  sbtcSats: bigint;
+  participants: number;
+  truncated: boolean;
+  byStaker: Map<string, { sats: bigint; isL1: boolean }>;
 }
 
 function phaseAt(burnHeight: number, pox: PoxInfo, bondIndex: number): BondPhaseName | 'pre-announce' | 'ended' {
@@ -47,10 +55,25 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
 
   if (!bond) throw new CliError(`bond ${bondIndex} is not configured on this contract`);
 
-  const allowanceAddress = opts.address ?? ctx.config.stxAddress;
-  const allowance = allowanceAddress
-    ? await fetchBondAllowance({ bondIndex, address: allowanceAddress, ...ctx.net })
-    : undefined;
+  const fill =
+    filledSbtc > 0n
+      ? await scanBondFill(ctx, bondIndex)
+      : { btcSats: 0n, sbtcSats: 0n, participants: 0, truncated: false, byStaker: new Map() };
+  const splitSum = fill.btcSats + fill.sbtcSats;
+
+  const allowanceAddresses =
+    opts.addresses && opts.addresses.length > 0
+      ? opts.addresses
+      : ctx.config.stxAddress
+        ? [ctx.config.stxAddress]
+        : [];
+  const allowances = await Promise.all(
+    allowanceAddresses.map(async (address) => ({
+      address,
+      allocationSats: await fetchBondAllowance({ bondIndex, address, ...ctx.net }),
+      filledSats: fill.byStaker.get(address)?.sats ?? 0n,
+    })),
+  );
 
   let allowlist: AllowlistEntry[] | undefined;
   let allowlistTruncated = false;
@@ -84,12 +107,14 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       stxValueRatio: bond.stxValueRatio,
       minUstxRatioBps: bond.minUstxRatioBps,
       earlyUnlockBytes: bond.earlyUnlockBytes,
-      earlyUnlockAdmin: bond.earlyUnlockAdmin,
-      filledSbtc,
+      filledSats: filledSbtc,
+      filledBtcLockedSats: fill.btcSats,
+      filledSbtcLockedSats: fill.sbtcSats,
+      participants: fill.participants,
       capacitySats: capacitySats ?? null,
       allowlist: allowlist ?? null,
       allowlistTruncated: allowlistTruncated || undefined,
-      allowanceSats: allowance ?? null,
+      allowances,
       schedule: schedule ?? null,
     },
     () => {
@@ -98,19 +123,30 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
         ['target rate', bps(bond.targetRateBps)],
         ['stx value ratio', `${bond.stxValueRatio} uSTX / 100 sats`],
         ['min stx ratio', bps(bond.minUstxRatioBps)],
-        ['early-unlock admin', explorerLink(ctx.config, bond.earlyUnlockAdmin)],
         ['early-unlock bytes', `${bond.earlyUnlockBytes.length / 2} bytes (${bond.earlyUnlockBytes})`],
       ];
       if (capacitySats !== undefined) {
         rows.push(['capacity', sats(capacitySats)]);
-        rows.push(['filled (sBTC)', `${sats(filledSbtc)} — ${percent(filledSbtc, capacitySats)} of capacity`]);
+        rows.push(['filled', `${sats(filledSbtc)} — ${percent(filledSbtc, capacitySats)} of capacity`]);
       } else {
-        rows.push(['filled (sBTC)', sats(filledSbtc)]);
+        rows.push(['filled', sats(filledSbtc)]);
       }
-      if (allowance !== undefined) {
-        rows.push(['allowance', `${sats(allowance)} for ${explorerLink(ctx.config, allowanceAddress!)}`]);
+      rows.push(['  via L1 BTC', sats(fill.btcSats)]);
+      rows.push(['  via sBTC', sats(fill.sbtcSats)]);
+      for (const a of allowances) {
+        rows.push(['allowance', explorerLink(ctx.config, a.address)]);
+        rows.push(['  allocation', sats(a.allocationSats)]);
+        rows.push(['  filled', `${sats(a.filledSats)} — ${percent(a.filledSats, a.allocationSats)} of allocation`]);
       }
       printRows(rows);
+      if (splitSum !== filledSbtc) {
+        printNote(
+          `custody split is reconstructed from register-for-bond events and sums to ${sats(splitSum)}; it does not net unstake-sbtc / early-exit, so it can exceed the live "filled" total`,
+        );
+      }
+      if (fill.truncated) {
+        printNote(`participant event scan stopped at ${EVENT_MAX_PAGES * EVENT_PAGE_SIZE} events — custody split may be incomplete`);
+      }
 
       if (allowlist) {
         printSection(`Allowlist — ${allowlist.length} staker${allowlist.length === 1 ? '' : 's'}`);
@@ -139,6 +175,62 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       }
     },
   );
+}
+
+async function scanBondFill(ctx: Ctx, bondIndex: number): Promise<FillBreakdown> {
+  const contractId = `${ctx.net.network.bootAddress}.pox-5`;
+  const byStaker = new Map<string, { sats: bigint; isL1: boolean }>();
+  let offset = 0;
+  let truncated = true;
+
+  for (let page = 0; page < EVENT_MAX_PAGES; page++) {
+    const url = `${ctx.config.extendedApiUrl}/v1/contract/${contractId}/events?limit=${EVENT_PAGE_SIZE}&offset=${offset}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new CliError(`pox-5 events request failed (HTTP ${res.status})`);
+    const results = ((await res.json()) as { results?: { contract_log?: { value?: { hex?: string } } }[] }).results ?? [];
+    for (const ev of results) {
+      const reg = registerFromEventHex(ev.contract_log?.value?.hex, bondIndex);
+      if (reg && !byStaker.has(reg.staker)) byStaker.set(reg.staker, { sats: reg.sats, isL1: reg.isL1 });
+    }
+    offset += EVENT_PAGE_SIZE;
+    if (results.length < EVENT_PAGE_SIZE) {
+      truncated = false;
+      break;
+    }
+  }
+
+  let btcSats = 0n;
+  let sbtcSats = 0n;
+  let participants = 0;
+  for (const { sats, isL1 } of byStaker.values()) {
+    if (sats <= 0n) continue;
+    participants += 1;
+    if (isL1) btcSats += sats;
+    else sbtcSats += sats;
+  }
+  return { btcSats, sbtcSats, participants, truncated, byStaker };
+}
+
+function registerFromEventHex(
+  hex: string | undefined,
+  bondIndex: number,
+): { staker: string; sats: bigint; isL1: boolean } | undefined {
+  if (!hex) return undefined;
+  let cv: ClarityValue;
+  try {
+    cv = hexToCV(hex);
+  } catch {
+    return undefined;
+  }
+  if (cv.type !== ClarityType.Tuple) return undefined;
+  const f = (cv as { value: Record<string, ClarityValue> }).value;
+  if (!f['topic'] || cvToValue(f['topic']) !== 'register-for-bond') return undefined;
+  if (Number((f['bond-index']! as { value: bigint }).value) !== bondIndex) return undefined;
+  return {
+    staker: cvToValue(f['staker']!) as string,
+    sats: (f['sats-total']! as { value: bigint }).value,
+    isL1: cvToValue(f['is-l1-lock']!) === true,
+  };
 }
 
 async function scanBondAllowlist(

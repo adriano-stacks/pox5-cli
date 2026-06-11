@@ -19,6 +19,7 @@ import { setupBondCommand, type AllowEntry } from './commands/setup-bond.js';
 import { setupSignerCommand } from './commands/setup-signer.js';
 import { lockBtcCommand, type UtxoRef } from './commands/lock-btc.js';
 import { registerForBondCommand } from './commands/register-for-bond.js';
+import { unlockScriptCommand } from './commands/unlock-script.js';
 import { faucetBtcCommand, faucetStxCommand } from './commands/faucet.js';
 import { keygenCommand, BTC_NETWORK_NAMES, type BtcNetworkName } from './commands/keygen.js';
 
@@ -80,6 +81,12 @@ const collectAllow = (v: string, acc: AllowEntry[] = []): AllowEntry[] => {
   }
   return acc;
 };
+const collectList = (v: string, acc: string[] = []): string[] => {
+  for (const item of v.split(',').map((s) => s.trim()).filter(Boolean)) {
+    if (!acc.includes(item)) acc.push(item);
+  }
+  return acc;
+};
 
 const program = new Command();
 
@@ -121,9 +128,9 @@ program
   .command('bond')
   .description('a bond’s parameters, fill, and (if derivable) schedule')
   .argument('<index>', 'bond index', intArg('index'))
-  .option('--address <addr>', 'also show this principal’s allowlist cap for the bond')
+  .option('--address <addr>', 'show allocation + filled for these principals (repeatable, comma-separated; default: POX5_STX_ADDRESS)', collectList)
   .option('--allowlist', 'list the full allowlist + capacity (queries contract events)')
-  .action(async (index, o, cmd) => bondCommand(ctxOf(cmd), index, { address: o.address, allowlist: o.allowlist === true }));
+  .action(async (index, o, cmd) => bondCommand(ctxOf(cmd), index, { addresses: o.address ?? [], allowlist: o.allowlist === true }));
 
 program
   .command('schedule')
@@ -161,13 +168,6 @@ program
   .option('--key <hex>', 'check whether this signer key has an active grant')
   .option('--auth-id <n>', 'compute the SIP-018 grant message hash for this auth id', intArg('--auth-id'))
   .action(async (signer, o, cmd) => signerCommand(ctxOf(cmd), signer, { key: o.key, authId: o.authId }));
-
-const collectList = (v: string, acc: string[] = []): string[] => {
-  for (const item of v.split(',').map((s) => s.trim()).filter(Boolean)) {
-    if (!acc.includes(item)) acc.push(item);
-  }
-  return acc;
-};
 
 program
   .command('signers')
@@ -211,7 +211,6 @@ program
   .requiredOption('--stx-ratio <n>', 'STX:BTC value ratio (uSTX per 100 sats)', bigIntArg('--stx-ratio'))
   .requiredOption('--min-ratio <bps>', 'minimum STX collateral ratio in basis points', intArg('--min-ratio'))
   .requiredOption('--early-unlock-bytes <hex>', 'Bitcoin early-exit script bytes', hexArg('--early-unlock-bytes', 683))
-  .requiredOption('--early-unlock-admin <principal>', 'principal allowed to announce early exits')
   .option('--allow <staker:maxSats>', 'allowlist a staker and its max sats (repeatable, comma-separated)', collectAllow)
   .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
   .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
@@ -222,7 +221,6 @@ program
       stxValueRatio: o.stxRatio,
       minUstxRatioBps: o.minRatio,
       earlyUnlockBytesHex: o.earlyUnlockBytes,
-      earlyUnlockAdmin: o.earlyUnlockAdmin,
       allowlist: o.allow ?? [],
       fee: o.fee ?? 10000n,
       broadcast: o.broadcast === true,
@@ -260,6 +258,12 @@ program
       broadcast: o.broadcast === true,
     }),
   );
+
+program
+  .command('unlock-script')
+  .description('build and explain the <pubkey> OP_CHECKSIG unlock fragment (staker unlock or early-unlock bytes)')
+  .argument('[btcPublicKey]', '33-byte compressed public key (default: derived from POX5_BTC_WIF)')
+  .action((publicKey, _o, cmd) => unlockScriptCommand(ctxOf(cmd), publicKey));
 
 program
   .command('lock-btc')

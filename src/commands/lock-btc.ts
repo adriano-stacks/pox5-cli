@@ -1,7 +1,6 @@
 import {
   bondPeriodToBurnHeight,
   buildDefaultUnlockScript,
-  buildLockingScript,
   computeBondUnlockHeight,
   computeP2wshOutputScript,
   fetchBondAllowance,
@@ -16,13 +15,14 @@ import { resolveStxAddress } from '../address.js';
 import {
   broadcastBtcTx,
   btcNetwork,
+  buildLockupScript,
   fetchBtcTxHex,
   parseTxOutput,
   resolveBtcKey,
   type BtcNetworkName,
 } from '../btc.js';
 import { bitcoinAddressLink, bitcoinTxLink, explorerLink } from '../explorer.js';
-import { fetchBondConfig, requirePoxWithBondCycle } from '../pox.js';
+import { fetchBondConfig, fetchLockupOutputScript, requirePoxWithBondCycle } from '../pox.js';
 import { bitcoinBlocks, output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
 const DUST_SATS = 546n;
@@ -82,13 +82,25 @@ export async function lockBtcCommand(ctx: Ctx, opts: LockBtcOpts): Promise<void>
 
   const unlockHeight = computeBondUnlockHeight({ bondIndex: opts.bond, poxInfo: pox });
   const unlockBytes = buildDefaultUnlockScript(key.publicKey);
-  const lockingScript = buildLockingScript({
+  const lockingScript = buildLockupScript({
     stxAddress,
     unlockHeight,
-    unlockBytes,
+    stakerUnlockBytes: unlockBytes,
     earlyUnlockBytes: bond.earlyUnlockBytes,
   });
   const lockOutputScript = computeP2wshOutputScript(lockingScript);
+  const onChainOutputScript = await fetchLockupOutputScript(ctx, {
+    staker: stxAddress,
+    unlockHeight,
+    stakerUnlockBytes: unlockBytes,
+    earlyUnlockBytes: bond.earlyUnlockBytes,
+  });
+  if (onChainOutputScript !== bytesToHex(lockOutputScript)) {
+    throw new CliError(
+      'locally derived lockup script does not match the contract\'s construct-lockup-output-script — ' +
+        'locking to it would strand the BTC (the script template likely changed; update the CLI)',
+    );
+  }
   const lockAddress = btc.Address(net).encode({ type: 'wsh', hash: lockOutputScript.slice(2) });
   const ownScript = btc.p2wpkh(hexToBytes(key.publicKey), net).script;
 
