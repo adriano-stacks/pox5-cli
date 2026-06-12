@@ -1,12 +1,9 @@
 import {
-  bondPeriodToRewardCycle,
   buildCalculateRewards,
   burnHeightToRewardCycle,
   currentDistributionCycle,
   distributionCycleToBurnHeight,
   fetchPoxInfo,
-  isBondActiveAtHeight,
-  type PoxInfo,
 } from '@stacks/bitcoin-staking';
 import {
   fetchNonce,
@@ -18,7 +15,8 @@ import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
-import { fetchBondConfig, fetchRewardsState, requirePoxWithBondCycle, type BondConfig } from '../pox.js';
+import { fetchBondConfig, fetchRewardsState, type BondConfig } from '../pox.js';
+import { discoverActiveBonds } from '../projection.js';
 import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { bps, output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
@@ -29,44 +27,6 @@ export interface CalculateRewardsOpts {
   bonds: number[];
   fee: bigint;
   broadcast: boolean;
-}
-
-interface ActiveBond {
-  index: number;
-  config: BondConfig;
-}
-
-// Mirrors the contract's assert-all-active-bonds-included: candidate indices are
-// latest-bond-index down through offset 0..5, kept when the bond exists and is
-// active at the calculation height. Sorted canonically (descending stx-value-ratio,
-// ascending index) so calculate-rewards never reverts with u33/u31/u29.
-async function discoverActiveBonds(ctx: Ctx, pox: PoxInfo, calcHeight: number): Promise<ActiveBond[]> {
-  const p = requirePoxWithBondCycle(ctx, pox);
-  const calcCycle = burnHeightToRewardCycle({ burnHeight: calcHeight, poxInfo: p });
-  let latest = 0;
-  while (bondPeriodToRewardCycle({ bondIndex: latest + 1, poxInfo: p }) <= calcCycle) latest++;
-
-  const candidates: number[] = [];
-  for (let offset = 0; offset <= 5 && offset <= latest; offset++) candidates.push(latest - offset);
-
-  const checked = await Promise.all(
-    candidates.map(async (index): Promise<ActiveBond | undefined> => {
-      const config = await fetchBondConfig(ctx, index);
-      if (config === undefined) return undefined;
-      if (!isBondActiveAtHeight({ bondIndex: index, burnHeight: calcHeight, poxInfo: p })) return undefined;
-      return { index, config };
-    }),
-  );
-
-  return checked
-    .filter((b): b is ActiveBond => b !== undefined)
-    .sort((a, b) =>
-      a.config.stxValueRatio > b.config.stxValueRatio
-        ? -1
-        : a.config.stxValueRatio < b.config.stxValueRatio
-          ? 1
-          : a.index - b.index,
-    );
 }
 
 export async function calculateRewardsCommand(ctx: Ctx, opts: CalculateRewardsOpts): Promise<void> {

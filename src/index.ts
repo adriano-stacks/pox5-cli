@@ -162,7 +162,7 @@ program
 
 program
   .command('rewards')
-  .description('all claimed + claimable sBTC for a signer-manager, every cycle and leg, most recent first')
+  .description('all claimed, claimable, and gathered-but-unsettled (pending) sBTC for a signer-manager, every cycle and leg, most recent first')
   .argument('[signerManager]', 'signer-manager principal (default: <POX5_STX_ADDRESS>.signer-manager)')
   .option('--cycle <cycle>', 'restrict to a single reward cycle (default: every cycle)', intArg('--cycle'))
   .option('--bond <index>', 'restrict to a single bond leg (default: the STX-only leg + every bond)', intArg('--bond'))

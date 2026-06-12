@@ -5,7 +5,8 @@ import { CliError } from '../errors.js';
 import { resolveStxAddress } from '../address.js';
 import { explorerLink } from '../explorer.js';
 import { fetchEarnedRewards, resolveFirstPox5Cycle } from '../pox.js';
-import { dim, output, printNote, printRows, printSection, sats } from '../output.js';
+import { projectPendingRewards } from '../projection.js';
+import { dim, output, printLegend, printNote, printRows, printSection, sats } from '../output.js';
 
 const EVENT_PAGE_SIZE = 50;
 const EVENT_MAX_PAGES = 100;
@@ -27,6 +28,7 @@ interface RewardRow {
   bondIndex?: number;
   claimable: bigint;
   claimed: bigint;
+  pending: bigint;
 }
 
 function legKey(cycle: number, bondIndex?: number): string {
@@ -40,11 +42,25 @@ function legLabel(bondIndex?: number): string {
 export async function rewardsCommand(ctx: Ctx, signerManagerArg: string | undefined, opts: RewardsOpts): Promise<void> {
   const signerManager = signerManagerArg ?? `${resolveStxAddress(ctx)}.signer-manager`;
 
-  const [pox, scan] = await Promise.all([fetchPoxInfo(ctx.net), scanClaims(ctx, signerManager)]);
+  const pox = await fetchPoxInfo(ctx.net);
+  const [scan, projection] = await Promise.all([
+    scanClaims(ctx, signerManager),
+    projectPendingRewards(ctx, pox, signerManager),
+  ]);
   const currentCycle = pox.rewardCycleId;
   const firstPox5 = resolveFirstPox5Cycle(ctx, pox);
 
+  const pendingByLeg = new Map<string, bigint>();
+  for (const leg of projection.legs) {
+    pendingByLeg.set(legKey(projection.cycle, leg.bondIndex), leg.pending);
+    if (leg.bondIndex !== undefined) scan.bondIndices.add(leg.bondIndex);
+  }
+
   const cycles = resolveCycles(opts, { currentCycle, firstPox5, seen: scan.cyclesSeen });
+  if (opts.cycle === undefined && !cycles.includes(projection.cycle)) {
+    cycles.push(projection.cycle);
+    cycles.sort((a, b) => b - a);
+  }
   const bondLegs: (number | undefined)[] =
     opts.bond !== undefined ? [opts.bond] : [undefined, ...[...scan.bondIndices].sort((a, b) => a - b)];
 
@@ -52,13 +68,14 @@ export async function rewardsCommand(ctx: Ctx, signerManagerArg: string | undefi
     cycles.flatMap((cycle) =>
       bondLegs.map(async (bondIndex): Promise<RewardRow> => {
         const claimable = await fetchEarnedRewards(ctx, { signer: signerManager, rewardCycle: cycle, bondIndex });
-        return { cycle, bondIndex, claimable, claimed: scan.claimed.get(legKey(cycle, bondIndex)) ?? 0n };
+        const pending = cycle === projection.cycle ? pendingByLeg.get(legKey(cycle, bondIndex)) ?? 0n : 0n;
+        return { cycle, bondIndex, claimable, claimed: scan.claimed.get(legKey(cycle, bondIndex)) ?? 0n, pending };
       }),
     ),
   );
 
   const rows = grid
-    .filter((r) => r.claimable > 0n || r.claimed > 0n)
+    .filter((r) => r.claimable > 0n || r.claimed > 0n || r.pending > 0n)
     .sort((a, b) => b.cycle - a.cycle || legOrder(a.bondIndex) - legOrder(b.bondIndex));
 
   const totalClaimable = rows.reduce((acc, r) => acc + r.claimable, 0n);
@@ -68,19 +85,24 @@ export async function rewardsCommand(ctx: Ctx, signerManagerArg: string | undefi
       ? String(cycles[0])
       : `${Math.min(...cycles)}–${Math.max(...cycles)} (current ${currentCycle})`;
 
+  const totalPending = rows.reduce((acc, r) => acc + r.pending, 0n);
+
   output(
     ctx,
     {
       signerManager,
       currentCycle,
       firstPox5Cycle: firstPox5 ?? null,
-      totals: { claimable: totalClaimable, claimed: totalClaimed },
+      totals: { pending: totalPending, claimable: totalClaimable, claimed: totalClaimed },
+      gathered: projection.gross,
+      pendingCycle: projection.cycle,
       rewards: rows.map((r) => ({
         cycle: r.cycle,
         bondIndex: r.bondIndex ?? null,
         leg: legLabel(r.bondIndex),
         claimable: r.claimable,
         claimed: r.claimed,
+        pending: r.pending,
       })),
       truncated: scan.truncated || undefined,
     },
@@ -88,6 +110,8 @@ export async function rewardsCommand(ctx: Ctx, signerManagerArg: string | undefi
       printSection(`Rewards — ${explorerLink(ctx.config, signerManager)}`);
       printRows([
         ['cycles', cyclesLabel],
+        ['gathered (pool)', sats(projection.gross)],
+        ['total pending', totalPending > 0n ? `~${sats(totalPending)}` : sats(0n)],
         ['total claimable', sats(totalClaimable)],
         ['total claimed', sats(totalClaimed)],
       ]);
@@ -98,7 +122,18 @@ export async function rewardsCommand(ctx: Ctx, signerManagerArg: string | undefi
         printRewardTable(rows);
       }
 
-      printNote('claimable = claimable now (pull it with `pox5 claim-rewards --cycle <n>`); claimed = reconstructed from claim-rewards events');
+      const legend: [string, string][] = [];
+      if (projection.gross > 0n) {
+        legend.push([
+          'pending',
+          `your projected cut of the ${sats(projection.gross)} gathered in the pool — an estimate, claimable once calculate-rewards settles cycle ${projection.cycle}${projection.nextCycle ? ' (the next distribution cycle)' : ''}`,
+        ]);
+      }
+      legend.push(
+        ['claimable', 'claimable now — pull it with `pox5 claim-rewards --cycle <n>`'],
+        ['claimed', 'reconstructed from claim-rewards events'],
+      );
+      printLegend(legend);
       if (scan.truncated) {
         printNote(`event scan stopped at ${EVENT_MAX_PAGES * EVENT_PAGE_SIZE} events — claimed history may be incomplete`);
       }
@@ -123,14 +158,15 @@ function resolveCycles(
 }
 
 function printRewardTable(rows: RewardRow[]): void {
-  const header = ['cycle', 'leg', 'claimable', 'claimed'];
+  const header = ['cycle', 'leg', 'pending', 'claimable', 'claimed'];
   const body = rows.map((r) => [
     String(r.cycle),
     legLabel(r.bondIndex),
+    r.pending > 0n ? `~${sats(r.pending)}` : '—',
     r.claimable > 0n ? sats(r.claimable) : '—',
     r.claimed > 0n ? sats(r.claimed) : '—',
   ]);
-  const alignRight = [true, false, false, false];
+  const alignRight = [true, false, false, false, false];
   const widths = header.map((h, i) => Math.max(h.length, ...body.map((row) => row[i]!.length)));
   const line = (cells: string[]): string =>
     ('  ' + cells.map((c, i) => (alignRight[i] ? c.padStart(widths[i]!) : c.padEnd(widths[i]!))).join('   ')).replace(/\s+$/, '');

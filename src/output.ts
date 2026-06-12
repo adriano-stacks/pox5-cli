@@ -59,6 +59,13 @@ export function printNote(message: string): void {
   process.stdout.write(dim(`  ${message}\n`));
 }
 
+export function printLegend(items: [term: string, description: string][]): void {
+  const width = items.reduce((m, [term]) => Math.max(m, term.length), 0);
+  for (const [term, description] of items) {
+    process.stdout.write(dim(`  ${term.padEnd(width)}   ${description}`) + '\n');
+  }
+}
+
 function fmt(value: unknown): string {
   if (value === null || value === undefined) return dim('—');
   if (typeof value === 'bigint') return value.toString();
