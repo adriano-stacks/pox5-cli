@@ -1,7 +1,8 @@
 import { TransactionSigner, broadcastTransaction, type StacksTransactionWire } from '@stacks/transactions';
 import type { Ctx } from './context.js';
 import { CliError } from './errors.js';
-import { clearProgress, progress } from './output.js';
+import { explorerTxLink } from './explorer.js';
+import { clearProgress, progress, type Row } from './output.js';
 
 export interface TxOutcome {
   status: string;
@@ -70,4 +71,69 @@ export function txStatusLabel(o: TxOutcome): string {
   if (o.status === 'abort_by_response') return `aborted — contract returned ${o.resultRepr ?? '(err)'}`;
   if (o.status === 'abort_by_post_condition') return 'aborted — post-condition failed';
   return o.status;
+}
+
+export interface TwoStepResult {
+  deployTxid?: string;
+  deployOutcome?: TxOutcome;
+  callTxid?: string;
+  callOutcome?: TxOutcome;
+  skipped?: string;
+}
+
+// The deploy-then-call pattern for any command that needs two dependent transactions:
+// publish a contract, WAIT for it to confirm on-chain, THEN send the call that needs it
+// (so the call no longer bounces with NoSuchContract). `deployTx` is undefined when the
+// contract already exists — the call is sent directly. The call is skipped (with a reason)
+// if the deploy reverts or doesn't confirm in the wait window.
+export async function deployThenCall(
+  ctx: Ctx,
+  deployTx: StacksTransactionWire | undefined,
+  callTx: StacksTransactionWire,
+  privateKey: string,
+): Promise<TwoStepResult> {
+  let deployTxid: string | undefined;
+  let deployOutcome: TxOutcome | undefined;
+  if (deployTx) {
+    const r = await signAndConfirm(ctx, deployTx, privateKey);
+    deployTxid = r.txid;
+    deployOutcome = r.outcome;
+    if (deployOutcome.aborted) {
+      return { deployTxid, deployOutcome, skipped: `deploy reverted on-chain (${txStatusLabel(deployOutcome)})` };
+    }
+    if (deployOutcome.pending) {
+      return { deployTxid, deployOutcome, skipped: 'deploy did not confirm within the wait window — re-run to send the follow-up once it lands' };
+    }
+  }
+  try {
+    const r = await signAndConfirm(ctx, callTx, privateKey);
+    return { deployTxid, deployOutcome, callTxid: r.txid, callOutcome: r.outcome };
+  } catch (e) {
+    if (!deployTxid) throw e;
+    return { deployTxid, deployOutcome, skipped: `the follow-up was not accepted (${(e as Error).message}) — re-run to retry` };
+  }
+}
+
+export function twoStepSucceeded(r: TwoStepResult): boolean {
+  return r.callOutcome !== undefined && !r.callOutcome.aborted && !r.callOutcome.pending;
+}
+
+export function twoStepRows(ctx: Ctx, r: TwoStepResult, labels: { deploy: string; call: string }): Row[] {
+  const rows: Row[] = [];
+  if (r.deployTxid) rows.push([`${labels.deploy} txid`, explorerTxLink(ctx.config, r.deployTxid)]);
+  if (r.deployOutcome) rows.push([`${labels.deploy} result`, txStatusLabel(r.deployOutcome)]);
+  if (r.callTxid) rows.push([`${labels.call} txid`, explorerTxLink(ctx.config, r.callTxid)]);
+  if (r.callOutcome) rows.push([`${labels.call} result`, txStatusLabel(r.callOutcome)]);
+  return rows;
+}
+
+export function twoStepNotes(r: TwoStepResult, labels: { call: string }): string[] {
+  const notes: string[] = [];
+  if (r.skipped) notes.push(r.skipped);
+  if (r.callOutcome?.aborted) notes.push(`${labels.call} reverted on-chain — it did not take effect`);
+  return notes;
+}
+
+export function twoStepAborted(r: TwoStepResult): boolean {
+  return r.deployOutcome?.aborted === true || r.callOutcome?.aborted === true;
 }

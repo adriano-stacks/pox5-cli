@@ -8,8 +8,6 @@ import {
 import { bytesToHex, hexToBytes } from '@stacks/common';
 import {
   ClarityVersion,
-  TransactionSigner,
-  broadcastTransaction,
   bufferCV,
   contractPrincipalCV,
   fetchNonce,
@@ -19,14 +17,13 @@ import {
   privateKeyToPublic,
   publicKeyToHex,
   uintCV,
-  type StacksTransactionWire,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveSignerPrivateKey, resolveStxPrivateKey } from '../address.js';
-import { explorerLink, explorerTxLink } from '../explorer.js';
+import { explorerLink } from '../explorer.js';
 import { fetchSbtcContractId } from '../pox.js';
-import { confirmTx, txStatusLabel } from '../tx.js';
+import { deployThenCall, twoStepAborted, twoStepNotes, twoStepRows, twoStepSucceeded } from '../tx.js';
 import { output, printNote, printRows, printSection, stx, type Row } from '../output.js';
 
 export interface SetupSignerOpts {
@@ -117,18 +114,6 @@ async function contractExists(ctx: Ctx, address: string, name: string): Promise<
   } catch {
     return false;
   }
-}
-
-async function sendTx(ctx: Ctx, tx: StacksTransactionWire, privateKey: string): Promise<string> {
-  const signer = new TransactionSigner(tx);
-  signer.signOrigin(privateKey);
-  const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
-    txid?: string;
-    error?: string;
-    reason?: string;
-  };
-  if (result.error) throw new CliError(`broadcast rejected: ${result.reason ?? result.error}`);
-  return result.txid!;
 }
 
 export async function setupSignerCommand(ctx: Ctx, opts: SetupSignerOpts): Promise<void> {
@@ -250,42 +235,27 @@ export async function setupSignerCommand(ctx: Ctx, opts: SetupSignerOpts): Promi
     );
   }
 
-  const deployTxid = deployTx ? await sendTx(ctx, deployTx, privateKey) : undefined;
-  let registerTxid: string | undefined;
-  let registerError: string | undefined;
-  try {
-    registerTxid = await sendTx(ctx, registerTx, privateKey);
-  } catch (e) {
-    if (!deployTxid) throw e;
-    registerError = (e as Error).message;
-  }
-  const registerOutcome = registerTxid ? await confirmTx(ctx, registerTxid) : undefined;
+  // Deploy, wait for it to confirm, then register-self — see deployThenCall.
+  const result = await deployThenCall(ctx, deployTx, registerTx, privateKey);
+  const registered = twoStepSucceeded(result);
 
   output(
     ctx,
     {
       ...json,
-      deployTxid: deployTxid ?? null,
-      registerTxid: registerTxid ?? null,
-      registerStatus: registerOutcome?.status ?? null,
-      registerError: registerError ?? null,
+      deployTxid: result.deployTxid ?? null,
+      deployStatus: result.deployOutcome?.status ?? null,
+      registerTxid: result.callTxid ?? null,
+      registerStatus: result.callOutcome?.status ?? null,
+      skipped: result.skipped ?? null,
+      registered,
     },
     () => {
       printSection(`Setup signer — ${opts.name}`);
-      printRows([
-        ...baseRows,
-        ['deploy txid', deployTxid ? explorerTxLink(ctx.config, deployTxid) : null],
-        ['register txid', registerTxid ? explorerTxLink(ctx.config, registerTxid) : null],
-        ['register result', registerOutcome ? txStatusLabel(registerOutcome) : null],
-      ]);
-      if (registerOutcome?.aborted) {
-        printNote('register-self reverted on-chain — the signer-manager is not registered');
-      }
-      if (registerError) {
-        printNote(`register-self was not accepted (${registerError})`);
-        printNote('re-run setup-signer --broadcast once the deploy confirms — it will skip the deploy and only register');
-      }
+      printRows([...baseRows, ...twoStepRows(ctx, result, { deploy: 'deploy', call: 'register' })]);
+      for (const note of twoStepNotes(result, { call: 'register-self' })) printNote(note);
+      if (registered) printNote('signer-manager deployed and registered — ready to stake');
     },
   );
-  if (registerOutcome?.aborted) process.exitCode = 1;
+  if (twoStepAborted(result)) process.exitCode = 1;
 }

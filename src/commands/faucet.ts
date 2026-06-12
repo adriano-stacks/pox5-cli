@@ -1,7 +1,5 @@
 import {
   ClarityVersion,
-  TransactionSigner,
-  broadcastTransaction,
   fetchNonce,
   getAddressFromPrivateKey,
   listCV,
@@ -12,13 +10,12 @@ import {
   publicKeyToHex,
   tupleCV,
   uintCV,
-  type StacksTransactionWire,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { resolveBtcAddress, resolveSbtcDeployerPrivateKey, resolveStxAddress } from '../address.js';
 import { bitcoinAddressLink, bitcoinTxLink, explorerLink, explorerTxLink } from '../explorer.js';
 import { CliError } from '../errors.js';
-import { confirmTx, txStatusLabel } from '../tx.js';
+import { deployThenCall, twoStepAborted, twoStepNotes, twoStepRows, twoStepSucceeded } from '../tx.js';
 import { output, printNote, printRows, printSection, sbtc, stx, type Row } from '../output.js';
 
 async function postFaucet(url: string): Promise<Record<string, unknown>> {
@@ -108,18 +105,6 @@ async function contractExists(ctx: Ctx, address: string, name: string): Promise<
   }
 }
 
-async function sendTx(ctx: Ctx, tx: StacksTransactionWire, privateKey: string): Promise<string> {
-  const signer = new TransactionSigner(tx);
-  signer.signOrigin(privateKey);
-  const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
-    txid?: string;
-    error?: string;
-    reason?: string;
-  };
-  if (result.error) throw new CliError(`broadcast rejected: ${result.reason ?? result.error}`);
-  return result.txid!;
-}
-
 export interface FaucetSbtcOpts {
   sats?: bigint;
   sbtc?: number;
@@ -202,34 +187,27 @@ export async function faucetSbtcCommand(ctx: Ctx, addressArg: string | undefined
     return;
   }
 
-  const deployTxid = deployTx ? await sendTx(ctx, deployTx, privateKey) : undefined;
-  let mintTxid: string | undefined;
-  let mintError: string | undefined;
-  try {
-    mintTxid = await sendTx(ctx, mintTx, privateKey);
-  } catch (e) {
-    if (!deployTxid) throw e;
-    mintError = (e as Error).message;
-  }
-  const mintOutcome = mintTxid ? await confirmTx(ctx, mintTxid) : undefined;
+  // Deploy the minter, wait for it to confirm, then mint — see deployThenCall.
+  const result = await deployThenCall(ctx, deployTx, mintTx, privateKey);
+  const minted = twoStepSucceeded(result);
 
   output(
     ctx,
-    { ...json, deployTxid: deployTxid ?? null, mintTxid: mintTxid ?? null, mintStatus: mintOutcome?.status ?? null, mintError: mintError ?? null },
+    {
+      ...json,
+      deployTxid: result.deployTxid ?? null,
+      deployStatus: result.deployOutcome?.status ?? null,
+      mintTxid: result.callTxid ?? null,
+      mintStatus: result.callOutcome?.status ?? null,
+      skipped: result.skipped ?? null,
+      minted,
+    },
     () => {
       printSection('sBTC faucet');
-      printRows([
-        ...baseRows,
-        ['deploy txid', deployTxid ? explorerTxLink(ctx.config, deployTxid) : null],
-        ['mint txid', mintTxid ? explorerTxLink(ctx.config, mintTxid) : null],
-        ['mint result', mintOutcome ? txStatusLabel(mintOutcome) : null],
-      ]);
-      if (mintOutcome?.aborted) printNote('the mint reverted on-chain — no sBTC was minted');
-      if (mintError) {
-        printNote(`mint was not accepted (${mintError})`);
-        printNote('re-run faucet sbtc --broadcast once the minter deploy confirms — it will skip the deploy and only mint');
-      }
+      printRows([...baseRows, ...twoStepRows(ctx, result, { deploy: 'minter deploy', call: 'mint' })]);
+      for (const note of twoStepNotes(result, { call: 'mint' })) printNote(note);
+      if (minted) printNote(`minted ${sbtc(amountSats)} to ${recipient}`);
     },
   );
-  if (mintOutcome?.aborted) process.exitCode = 1;
+  if (twoStepAborted(result)) process.exitCode = 1;
 }
