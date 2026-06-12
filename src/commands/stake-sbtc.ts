@@ -11,8 +11,6 @@ import {
 import {
   Pc,
   PostConditionMode,
-  TransactionSigner,
-  broadcastTransaction,
   fetchNonce,
   getAddressFromPrivateKey,
   makeUnsignedContractCall,
@@ -28,6 +26,7 @@ import { CliError } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
 import { fetchBondConfig, fetchSbtcBalance, fetchSbtcContractId, requirePoxWithBondCycle } from '../pox.js';
+import { signAndConfirm, txStatusLabel } from '../tx.js';
 import {
   bitcoinBlocks,
   output,
@@ -185,19 +184,14 @@ export async function stakeSbtcCommand(ctx: Ctx, opts: StakeSbtcOpts): Promise<v
     throw new CliError(`staking would be rejected: ${blockers.join('; ')}`);
   }
 
-  const signer = new TransactionSigner(tx);
-  signer.signOrigin(privateKey);
-  const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
-    txid?: string;
-    error?: string;
-    reason?: string;
-  };
-  if (result.error) throw new CliError(`broadcast rejected: ${result.reason ?? result.error}`);
-  const txid = result.txid!;
+  const { txid, outcome } = await signAndConfirm(ctx, tx, privateKey);
 
-  output(ctx, { ...json, txid }, () => {
+  output(ctx, { ...json, txid, status: outcome.status, result: outcome.resultRepr ?? null }, () => {
     printSection(`Stake sBTC into bond ${opts.bond}`);
-    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)]]);
-    printNote('the contract now custodies your sBTC; withdraw with unstake-sbtc after the bond starts');
+    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)], ['result', txStatusLabel(outcome)]]);
+    if (outcome.aborted) printNote('the transaction reverted on-chain — no sBTC was staked');
+    else if (outcome.pending) printNote('still pending — re-check the explorer link or pox5 position');
+    else printNote('the contract now custodies your sBTC; withdraw with unstake-sbtc after the bond starts');
   });
+  if (outcome.aborted) process.exitCode = 1;
 }

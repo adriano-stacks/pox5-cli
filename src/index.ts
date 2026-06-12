@@ -13,6 +13,7 @@ import { quoteCommand } from './commands/quote.js';
 import { rewardsCommand } from './commands/rewards.js';
 import { calculateRewardsCommand } from './commands/calculate-rewards.js';
 import { claimRewardsCommand } from './commands/claim-rewards.js';
+import { claimStakerRewardsCommand } from './commands/claim-staker-rewards.js';
 import { totalsCommand } from './commands/totals.js';
 import { signerCommand } from './commands/signer.js';
 import { signersCommand } from './commands/signers.js';
@@ -161,16 +162,16 @@ program
 
 program
   .command('rewards')
-  .description('earned/unclaimed sBTC for a signer-manager in a reward cycle (optionally a bond leg)')
+  .description('all claimed + claimable sBTC for a signer-manager, every cycle and leg, most recent first')
   .argument('[signerManager]', 'signer-manager principal (default: <POX5_STX_ADDRESS>.signer-manager)')
-  .requiredOption('--cycle <cycle>', 'reward cycle to inspect', intArg('--cycle'))
-  .option('--bond <index>', 'inspect this bond leg within the cycle (default: the STX-only leg)', intArg('--bond'))
+  .option('--cycle <cycle>', 'restrict to a single reward cycle (default: every cycle)', intArg('--cycle'))
+  .option('--bond <index>', 'restrict to a single bond leg (default: the STX-only leg + every bond)', intArg('--bond'))
   .action(async (signer, o, cmd) => rewardsCommand(ctxOf(cmd), signer, { cycle: o.cycle, bond: o.bond }));
 
 program
   .command('calculate-rewards')
   .description('settle a distribution cycle: run the sBTC reward waterfall over the active bonds; dry run unless --broadcast')
-  .option('--bond <index>', 'an active bond to include, in canonical order (descending stx-value-ratio, ascending index; repeatable, comma-separated)', collectInts('--bond'))
+  .option('--bond <index>', 'override the bond list (default: auto-detect the bonds active at the calculation height, in canonical order; repeatable, comma-separated)', collectInts('--bond'))
   .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
   .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
   .action(async (o, cmd) =>
@@ -194,6 +195,26 @@ program
       signerManager: o.signerManager,
       cycle: o.cycle,
       bonds: o.bond ?? [],
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    }),
+  );
+
+program
+  .command('claim-staker-rewards')
+  .description('pay an individual staker their share out of a signer-manager (routes through the manager); dry run unless --broadcast')
+  .requiredOption('--cycle <cycle>', 'reward cycle to claim', intArg('--cycle'))
+  .option('--bond <index>', 'the bond leg to claim (omit for the STX-only leg)', intArg('--bond'))
+  .option('--staker <principal>', 'the staker to pay (default: POX5_STX_ADDRESS)')
+  .option('--signer-manager <principal>', 'signer-manager the staker delegates through (default: <sender>.signer-manager)')
+  .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
+  .action(async (o, cmd) =>
+    claimStakerRewardsCommand(ctxOf(cmd), {
+      staker: o.staker,
+      signerManager: o.signerManager,
+      cycle: o.cycle,
+      bond: o.bond,
       fee: o.fee ?? 10000n,
       broadcast: o.broadcast === true,
     }),

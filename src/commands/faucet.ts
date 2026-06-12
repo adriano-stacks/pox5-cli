@@ -18,6 +18,7 @@ import type { Ctx } from '../context.js';
 import { resolveBtcAddress, resolveSbtcDeployerPrivateKey, resolveStxAddress } from '../address.js';
 import { bitcoinAddressLink, bitcoinTxLink, explorerLink, explorerTxLink } from '../explorer.js';
 import { CliError } from '../errors.js';
+import { confirmTx, txStatusLabel } from '../tx.js';
 import { output, printNote, printRows, printSection, sbtc, stx, type Row } from '../output.js';
 
 async function postFaucet(url: string): Promise<Record<string, unknown>> {
@@ -210,17 +211,25 @@ export async function faucetSbtcCommand(ctx: Ctx, addressArg: string | undefined
     if (!deployTxid) throw e;
     mintError = (e as Error).message;
   }
+  const mintOutcome = mintTxid ? await confirmTx(ctx, mintTxid) : undefined;
 
-  output(ctx, { ...json, deployTxid: deployTxid ?? null, mintTxid: mintTxid ?? null, mintError: mintError ?? null }, () => {
-    printSection('sBTC faucet');
-    printRows([
-      ...baseRows,
-      ['deploy txid', deployTxid ? explorerTxLink(ctx.config, deployTxid) : null],
-      ['mint txid', mintTxid ? explorerTxLink(ctx.config, mintTxid) : null],
-    ]);
-    if (mintError) {
-      printNote(`mint was not accepted (${mintError})`);
-      printNote('re-run faucet sbtc --broadcast once the minter deploy confirms — it will skip the deploy and only mint');
-    }
-  });
+  output(
+    ctx,
+    { ...json, deployTxid: deployTxid ?? null, mintTxid: mintTxid ?? null, mintStatus: mintOutcome?.status ?? null, mintError: mintError ?? null },
+    () => {
+      printSection('sBTC faucet');
+      printRows([
+        ...baseRows,
+        ['deploy txid', deployTxid ? explorerTxLink(ctx.config, deployTxid) : null],
+        ['mint txid', mintTxid ? explorerTxLink(ctx.config, mintTxid) : null],
+        ['mint result', mintOutcome ? txStatusLabel(mintOutcome) : null],
+      ]);
+      if (mintOutcome?.aborted) printNote('the mint reverted on-chain — no sBTC was minted');
+      if (mintError) {
+        printNote(`mint was not accepted (${mintError})`);
+        printNote('re-run faucet sbtc --broadcast once the minter deploy confirms — it will skip the deploy and only mint');
+      }
+    },
+  );
+  if (mintOutcome?.aborted) process.exitCode = 1;
 }

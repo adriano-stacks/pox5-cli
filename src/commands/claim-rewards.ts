@@ -1,7 +1,5 @@
 import {
   PostConditionMode,
-  TransactionSigner,
-  broadcastTransaction,
   fetchNonce,
   getAddressFromPrivateKey,
   listCV,
@@ -15,6 +13,7 @@ import { CliError } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
 import { fetchEarnedRewards } from '../pox.js';
+import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
 const MAX_BOND_PERIODS = 6;
@@ -126,19 +125,19 @@ export async function claimRewardsCommand(ctx: Ctx, opts: ClaimRewardsOpts): Pro
     throw new CliError(`claim-rewards would be rejected: ${blockers.join('; ')}`);
   }
 
-  const signer = new TransactionSigner(tx);
-  signer.signOrigin(privateKey);
-  const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
-    txid?: string;
-    error?: string;
-    reason?: string;
-  };
-  if (result.error) throw new CliError(`broadcast rejected: ${result.reason ?? result.error}`);
-  const txid = result.txid!;
+  const { txid, outcome } = await signAndConfirm(ctx, tx, privateKey);
 
-  output(ctx, { ...json, txid }, () => {
+  output(ctx, { ...json, txid, status: outcome.status, result: outcome.resultRepr ?? null }, () => {
     printSection('Claim rewards');
-    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)]]);
-    printNote('the sBTC now sits in the signer-manager; distribute to stakers with claim-staker-rewards-for-signer');
+    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)], ['result', txStatusLabel(outcome)]]);
+    if (outcome.aborted) {
+      printNote('the transaction reverted on-chain — no sBTC was transferred');
+    } else if (outcome.pending) {
+      printNote('still pending — re-check the explorer link, then verify with pox5 rewards');
+    } else {
+      printNote('the sBTC now sits in the signer-manager; distribute to stakers with claim-staker-rewards-for-signer');
+    }
   });
+
+  if (outcome.aborted) process.exitCode = 1;
 }

@@ -6,8 +6,6 @@ import {
   rewardCycleToBurnHeight,
 } from '@stacks/bitcoin-staking';
 import {
-  TransactionSigner,
-  broadcastTransaction,
   fetchNonce,
   getAddressFromPrivateKey,
   privateKeyToPublic,
@@ -17,6 +15,7 @@ import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
+import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { output, printNote, printRows, printSection, stx, type Row } from '../output.js';
 
 const MAX_CYCLES = 96;
@@ -92,22 +91,17 @@ export async function stakeCommand(ctx: Ctx, opts: StakeOpts): Promise<void> {
     return;
   }
 
-  const signer = new TransactionSigner(tx);
-  signer.signOrigin(privateKey);
-  const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
-    txid?: string;
-    error?: string;
-    reason?: string;
-  };
-  if (result.error) throw new CliError(`broadcast rejected: ${result.reason ?? result.error}`);
-  const txid = result.txid!;
+  const { txid, outcome } = await signAndConfirm(ctx, tx, privateKey);
 
   output(
     ctx,
-    { sender, signerManager: opts.signerManager, amountUstx: opts.amountUstx, cycles: opts.cycles, startBurnHt, firstRewardCycle, firstRewardCycleStartHeight: firstCycleStartHeight, fee: opts.fee, nonce, txid },
+    { sender, signerManager: opts.signerManager, amountUstx: opts.amountUstx, cycles: opts.cycles, startBurnHt, firstRewardCycle, firstRewardCycleStartHeight: firstCycleStartHeight, fee: opts.fee, nonce, txid, status: outcome.status, result: outcome.resultRepr ?? null },
     () => {
       printSection('Stake');
-      printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)]]);
+      printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)], ['result', txStatusLabel(outcome)]]);
+      if (outcome.aborted) printNote('the transaction reverted on-chain — no STX was locked');
+      else if (outcome.pending) printNote('still pending — re-check the explorer link or pox5 position');
     },
   );
+  if (outcome.aborted) process.exitCode = 1;
 }

@@ -9,8 +9,6 @@ import { computeP2wshOutputScript } from '@stacks/bitcoin-staking';
 import { bytesToHex } from '@stacks/common';
 import * as btc from '@scure/btc-signer';
 import {
-  TransactionSigner,
-  broadcastTransaction,
   fetchNonce,
   getAddressFromPrivateKey,
   privateKeyToPublic,
@@ -38,6 +36,7 @@ import {
   fetchLockupOutputScript,
   requirePoxWithBondCycle,
 } from '../pox.js';
+import { signAndConfirm, txStatusLabel, type TxOutcome } from '../tx.js';
 import { output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
 const DUST_SATS = 546n;
@@ -224,29 +223,27 @@ export async function earlyExitCommand(ctx: Ctx, opts: EarlyExitOpts): Promise<v
   if (l1) l1Txid = await broadcastBtcTx(ctx.config, l1.txHex);
 
   let announceTxid: string | undefined;
+  let announceOutcome: TxOutcome | undefined;
   if (l2) {
-    const signer = new TransactionSigner(l2.tx);
-    signer.signOrigin(privateKey);
-    const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
-      txid?: string;
-      error?: string;
-      reason?: string;
-    };
-    if (result.error) throw new CliError(`L2 announce rejected: ${result.reason ?? result.error}`);
-    announceTxid = result.txid!;
+    const r = await signAndConfirm(ctx, l2.tx, privateKey);
+    announceTxid = r.txid;
+    announceOutcome = r.outcome;
   }
 
-  output(ctx, { ...json, l1Txid: l1Txid ?? null, announceTxid: announceTxid ?? null }, () => {
+  output(ctx, { ...json, l1Txid: l1Txid ?? null, announceTxid: announceTxid ?? null, announceStatus: announceOutcome?.status ?? null }, () => {
     printSection(`Early exit — bond ${opts.bond}`);
     printRows([['staker', explorerLink(ctx.config, staker)], ['signer-manager', explorerLink(ctx.config, signerManager)]]);
     if (l1 && l1Txid) {
       printSection('L1 spend (Bitcoin early-exit branch)');
       printRows([...l1Rows.slice(0, -1), ['spend txid', bitcoinTxLink(ctx.config, l1Txid)]]);
     }
-    if (announceTxid) {
+    if (announceTxid && announceOutcome) {
       printSection('L2 announce (announce-l1-early-exit)');
-      printRows([['txid', explorerTxLink(ctx.config, announceTxid)]]);
-      printNote('BTC shares are wound down; the paired STX stays locked through the bond’s normal unlock cycle');
+      printRows([['txid', explorerTxLink(ctx.config, announceTxid)], ['result', txStatusLabel(announceOutcome)]]);
+      if (announceOutcome.aborted) printNote('the L2 announce reverted on-chain — the early exit was not recorded');
+      else if (announceOutcome.pending) printNote('still pending — re-check the explorer link');
+      else printNote('BTC shares are wound down; the paired STX stays locked through the bond’s normal unlock cycle');
     }
   });
+  if (announceOutcome?.aborted) process.exitCode = 1;
 }

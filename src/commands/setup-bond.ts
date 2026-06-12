@@ -6,8 +6,6 @@ import {
 } from '@stacks/bitcoin-staking';
 import { bytesToHex, hexToBytes } from '@stacks/common';
 import {
-  TransactionSigner,
-  broadcastTransaction,
   bufferCV,
   cvToString,
   deserializeCV,
@@ -26,6 +24,7 @@ import { CliError } from '../errors.js';
 import { resolveBondAdminPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
 import { requirePoxWithBondCycle } from '../pox.js';
+import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { bps, dim, output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
 const BOND_GAP_CYCLES = 2;
@@ -175,23 +174,18 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
     );
   }
 
-  const signer = new TransactionSigner(tx);
-  signer.signOrigin(privateKey);
-  const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
-    txid?: string;
-    error?: string;
-    reason?: string;
-  };
-  if (result.error) throw new CliError(`broadcast rejected: ${result.reason ?? result.error}`);
-  const txid = result.txid!;
+  const { txid, outcome } = await signAndConfirm(ctx, tx, privateKey);
 
-  output(ctx, { ...json, txid }, () => {
+  output(ctx, { ...json, txid, status: outcome.status, result: outcome.resultRepr ?? null }, () => {
     printSection(`Setup bond ${opts.bondIndex}`);
-    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)]]);
+    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)], ['result', txStatusLabel(outcome)]]);
+    if (outcome.aborted) printNote('the transaction reverted on-chain — the bond was not set up');
+    else if (outcome.pending) printNote('still pending — re-check the explorer link or pox5 bond');
     printAllowlist(ctx, opts.allowlist);
     printSection('Schedule');
     printRows(scheduleRows);
   });
+  if (outcome.aborted) process.exitCode = 1;
 }
 
 function allowlistSummary(allowlist: AllowEntry[], total: bigint): string {

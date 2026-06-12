@@ -196,6 +196,39 @@ export async function fetchSignerRewardLeg(ctx: Ctx, opts: RewardLegArgs): Promi
   return { earned, unclaimed, rptSettled, shares };
 }
 
+export async function fetchSignerShares(ctx: Ctx, opts: RewardLegArgs): Promise<bigint> {
+  return readSignerLegUint(ctx, 'get-signer-shares-staked-for-cycle', opts);
+}
+
+export async function fetchEarnedStakerRewards(
+  ctx: Ctx,
+  opts: { signer: string; rewardCycle: number; bondIndex?: number; staker: string },
+): Promise<bigint> {
+  const bondArg = opts.bondIndex === undefined ? noneCV() : someCV(uintCV(opts.bondIndex));
+  const result = await callPoxReadOnly(ctx, 'get-earned-staker-rewards', [
+    principalCV(opts.signer),
+    uintCV(opts.rewardCycle),
+    bondArg,
+    principalCV(opts.staker),
+  ]);
+  if (result.type !== ClarityType.UInt) {
+    throw new CliError(`get-earned-staker-rewards returned unexpected type ${result.type}`);
+  }
+  return (result as { value: bigint }).value;
+}
+
+export async function fetchTotalSharesStaked(
+  ctx: Ctx,
+  opts: { rewardCycle: number; bondIndex?: number },
+): Promise<bigint> {
+  const bondArg = opts.bondIndex === undefined ? noneCV() : someCV(uintCV(opts.bondIndex));
+  const result = await callPoxReadOnly(ctx, 'get-total-shares-staked-for-cycle', [uintCV(opts.rewardCycle), bondArg]);
+  if (result.type !== ClarityType.UInt) {
+    throw new CliError(`get-total-shares-staked-for-cycle returned unexpected type ${result.type}`);
+  }
+  return (result as { value: bigint }).value;
+}
+
 export async function fetchHasAnnouncedL1EarlyExit(
   ctx: Ctx,
   opts: { bondIndex: number; staker: string },

@@ -25,6 +25,8 @@ import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveSignerPrivateKey, resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
+import { fetchSbtcContractId } from '../pox.js';
+import { confirmTx, txStatusLabel } from '../tx.js';
 import { output, printNote, printRows, printSection, stx, type Row } from '../output.js';
 
 export interface SetupSignerOpts {
@@ -35,8 +37,9 @@ export interface SetupSignerOpts {
   broadcast: boolean;
 }
 
-function signerManagerSource(bootAddress: string): string {
+function signerManagerSource(bootAddress: string, sbtcContractId: string): string {
   const pox5 = `'${bootAddress}.pox-5`;
+  const sbtc = `'${sbtcContractId}`;
   return `(impl-trait ${pox5}.signer-manager-trait)
 (use-trait signer-manager-trait ${pox5}.signer-manager-trait)
 
@@ -66,6 +69,36 @@ function signerManagerSource(bootAddress: string): string {
         (asserts! (is-eq (contract-of self) current-contract) ERR_UNAUTHORIZED)
         (try! (contract-call? ${pox5} grant-signer-key signer-key current-contract auth-id signer-sig))
         (contract-call? ${pox5} register-signer self signer-key)
+    )
+)
+
+(define-public (claim-rewards
+        (bond-periods (list 6 uint))
+        (reward-cycle uint)
+    )
+    (contract-call? ${pox5} claim-rewards bond-periods reward-cycle)
+)
+
+(define-public (claim-staker-rewards
+        (staker principal)
+        (reward-cycle uint)
+        (bond-index (optional uint))
+    )
+    (let (
+            (info (try! (contract-call? ${pox5} claim-staker-rewards-for-signer staker reward-cycle bond-index)))
+            (earned (get earned info))
+        )
+        (if (> earned u0)
+            (try! (as-contract?
+                ((with-ft ${sbtc} "sbtc-token" earned))
+                (begin
+                    (try! (contract-call? ${sbtc} transfer earned tx-sender staker none))
+                    true
+                )
+            ))
+            true
+        )
+        (ok info)
     )
 )
 `;
@@ -133,7 +166,13 @@ export async function setupSignerCommand(ctx: Ctx, opts: SetupSignerOpts): Promi
   const signatureValid = verifySignerKeyGrant({ ...grantOpts, publicKey: signerKey, signature });
   if (!signatureValid) throw new CliError('signer-key grant signature failed local verification');
 
-  const source = signerManagerSource(ctx.net.network.bootAddress);
+  const sbtcContractId = await fetchSbtcContractId(ctx);
+  if (!sbtcContractId) {
+    throw new CliError(
+      'could not resolve the sBTC token contract from pox-5 source — needed for the manager’s claim-staker-rewards payout',
+    );
+  }
+  const source = signerManagerSource(ctx.net.network.bootAddress, sbtcContractId);
   const nonce = await fetchNonce({ address: sender, ...ctx.net });
   const deployNonce = nonce;
   const registerNonce = deployed ? nonce : nonce + 1n;
@@ -220,17 +259,33 @@ export async function setupSignerCommand(ctx: Ctx, opts: SetupSignerOpts): Promi
     if (!deployTxid) throw e;
     registerError = (e as Error).message;
   }
+  const registerOutcome = registerTxid ? await confirmTx(ctx, registerTxid) : undefined;
 
-  output(ctx, { ...json, deployTxid: deployTxid ?? null, registerTxid: registerTxid ?? null, registerError: registerError ?? null }, () => {
-    printSection(`Setup signer — ${opts.name}`);
-    printRows([
-      ...baseRows,
-      ['deploy txid', deployTxid ? explorerTxLink(ctx.config, deployTxid) : null],
-      ['register txid', registerTxid ? explorerTxLink(ctx.config, registerTxid) : null],
-    ]);
-    if (registerError) {
-      printNote(`register-self was not accepted (${registerError})`);
-      printNote('re-run setup-signer --broadcast once the deploy confirms — it will skip the deploy and only register');
-    }
-  });
+  output(
+    ctx,
+    {
+      ...json,
+      deployTxid: deployTxid ?? null,
+      registerTxid: registerTxid ?? null,
+      registerStatus: registerOutcome?.status ?? null,
+      registerError: registerError ?? null,
+    },
+    () => {
+      printSection(`Setup signer — ${opts.name}`);
+      printRows([
+        ...baseRows,
+        ['deploy txid', deployTxid ? explorerTxLink(ctx.config, deployTxid) : null],
+        ['register txid', registerTxid ? explorerTxLink(ctx.config, registerTxid) : null],
+        ['register result', registerOutcome ? txStatusLabel(registerOutcome) : null],
+      ]);
+      if (registerOutcome?.aborted) {
+        printNote('register-self reverted on-chain — the signer-manager is not registered');
+      }
+      if (registerError) {
+        printNote(`register-self was not accepted (${registerError})`);
+        printNote('re-run setup-signer --broadcast once the deploy confirms — it will skip the deploy and only register');
+      }
+    },
+  );
+  if (registerOutcome?.aborted) process.exitCode = 1;
 }

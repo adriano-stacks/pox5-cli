@@ -1,8 +1,6 @@
 import {
   Pc,
   PostConditionMode,
-  TransactionSigner,
-  broadcastTransaction,
   fetchNonce,
   getAddressFromPrivateKey,
   makeUnsignedContractCall,
@@ -16,6 +14,7 @@ import { CliError } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
 import { fetchBondMembershipFull, fetchSbtcBalance, fetchSbtcContractId } from '../pox.js';
+import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { output, printNote, printRows, printSection, sbtc, stx, type Row } from '../output.js';
 
 export interface UnstakeSbtcOpts {
@@ -128,19 +127,14 @@ export async function unstakeSbtcCommand(ctx: Ctx, opts: UnstakeSbtcOpts): Promi
     throw new CliError(`unstake would be rejected: ${blockers.join('; ')}`);
   }
 
-  const signer = new TransactionSigner(tx);
-  signer.signOrigin(privateKey);
-  const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
-    txid?: string;
-    error?: string;
-    reason?: string;
-  };
-  if (result.error) throw new CliError(`broadcast rejected: ${result.reason ?? result.error}`);
-  const txid = result.txid!;
+  const { txid, outcome } = await signAndConfirm(ctx, tx, privateKey);
 
-  output(ctx, { ...json, txid }, () => {
+  output(ctx, { ...json, txid, status: outcome.status, result: outcome.resultRepr ?? null }, () => {
     printSection(`Unstake sBTC from bond ${membership.bondIndex}`);
-    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)]]);
-    printNote(`the contract released ${sbtc(opts.amountSats)} to your wallet; ${sbtc(remaining)} stays staked`);
+    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)], ['result', txStatusLabel(outcome)]]);
+    if (outcome.aborted) printNote('the transaction reverted on-chain — no sBTC was withdrawn');
+    else if (outcome.pending) printNote('still pending — re-check the explorer link or pox5 position');
+    else printNote(`the contract released ${sbtc(opts.amountSats)} to your wallet; ${sbtc(remaining)} stays staked`);
   });
+  if (outcome.aborted) process.exitCode = 1;
 }

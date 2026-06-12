@@ -15,8 +15,6 @@ import {
 } from '@stacks/bitcoin-staking';
 import { bytesToHex, hexToBytes } from '@stacks/common';
 import {
-  TransactionSigner,
-  broadcastTransaction,
   bufferCV,
   fetchNonce,
   getAddressFromPrivateKey,
@@ -46,6 +44,7 @@ import {
 } from '../btc.js';
 import { bitcoinTxLink, explorerLink, explorerTxLink } from '../explorer.js';
 import { fetchBondConfig, fetchLockupOutputScript, requirePoxWithBondCycle } from '../pox.js';
+import { signAndConfirm, txStatusLabel } from '../tx.js';
 import {
   bitcoinBlocks,
   clearProgress,
@@ -280,19 +279,14 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
     throw new CliError(`registration would be rejected: ${blockers.join('; ')}`);
   }
 
-  const signer = new TransactionSigner(tx);
-  signer.signOrigin(privateKey);
-  const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
-    txid?: string;
-    error?: string;
-    reason?: string;
-  };
-  if (result.error) throw new CliError(`broadcast rejected: ${result.reason ?? result.error}`);
-  const txid = result.txid!;
+  const { txid, outcome } = await signAndConfirm(ctx, tx, privateKey);
 
-  output(ctx, { ...json, txid }, () => {
+  output(ctx, { ...json, txid, status: outcome.status, result: outcome.resultRepr ?? null }, () => {
     printSection(`Register for bond ${opts.bond}`);
-    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)]]);
-    printNote('keep POX5_BTC_WIF safe — its key is the only way to spend the lock after the unlock height');
+    printRows([...baseRows, ['txid', explorerTxLink(ctx.config, txid)], ['result', txStatusLabel(outcome)]]);
+    if (outcome.aborted) printNote('the transaction reverted on-chain — the registration did not take effect');
+    else if (outcome.pending) printNote('still pending — re-check the explorer link or pox5 position');
+    else printNote('keep POX5_BTC_WIF safe — its key is the only way to spend the lock after the unlock height');
   });
+  if (outcome.aborted) process.exitCode = 1;
 }

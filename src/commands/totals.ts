@@ -1,11 +1,10 @@
 import {
   fetchTotalSbtcStaked,
   fetchTotalSbtcStakedForBond,
-  fetchTotalSharesStakedForCycle,
   fetchTotalUstxStacked,
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
-import { fetchRewardsState } from '../pox.js';
+import { fetchRewardsState, fetchTotalSharesStaked } from '../pox.js';
 import { output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
 export interface TotalsOpts {
@@ -19,15 +18,15 @@ export async function totalsCommand(ctx: Ctx, opts: TotalsOpts): Promise<void> {
     fetchRewardsState(ctx),
     opts.bond === undefined
       ? undefined
-      : Promise.all([
-          fetchTotalSbtcStakedForBond({ bondIndex: opts.bond, ...ctx.net }),
-          fetchTotalSharesStakedForCycle({ index: opts.bond, isBond: true, ...ctx.net }),
-        ]).then(([filledSbtc, shares]) => ({ index: opts.bond!, filledSbtc, shares })),
+      : fetchTotalSbtcStakedForBond({ bondIndex: opts.bond, ...ctx.net }).then((filledSbtc) => ({
+          index: opts.bond!,
+          filledSbtc,
+        })),
     opts.cycle === undefined
       ? undefined
       : Promise.all([
           fetchTotalUstxStacked({ rewardCycle: opts.cycle, ...ctx.net }),
-          fetchTotalSharesStakedForCycle({ index: opts.cycle, isBond: false, ...ctx.net }),
+          fetchTotalSharesStaked(ctx, { rewardCycle: opts.cycle }),
         ]).then(([ustx, shares]) => ({ index: opts.cycle!, ustx, shares })),
   ]);
 
@@ -39,8 +38,7 @@ export async function totalsCommand(ctx: Ctx, opts: TotalsOpts): Promise<void> {
       ['last distribution height', rewards.lastComputeHeight === 0 ? 'never' : `${rewards.lastComputeHeight} (Bitcoin)`],
     ];
     if (bond) {
-      rows.push([`bond ${bond.index} filled`, sats(bond.filledSbtc)]);
-      rows.push([`bond ${bond.index} shares`, sats(bond.shares)]);
+      rows.push([`bond ${bond.index} filled (sBTC = shares)`, sats(bond.filledSbtc)]);
     }
     if (cycle) {
       rows.push([`cycle ${cycle.index} STX stacked`, stx(cycle.ustx)]);

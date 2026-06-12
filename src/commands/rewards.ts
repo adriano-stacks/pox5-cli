@@ -1,31 +1,213 @@
+import { fetchPoxInfo } from '@stacks/bitcoin-staking';
+import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
+import { CliError } from '../errors.js';
 import { resolveStxAddress } from '../address.js';
 import { explorerLink } from '../explorer.js';
-import { fetchSignerRewardLeg } from '../pox.js';
-import { output, printRows, printSection, sats, stx } from '../output.js';
+import { fetchEarnedRewards, resolveFirstPox5Cycle } from '../pox.js';
+import { dim, output, printNote, printRows, printSection, sats } from '../output.js';
+
+const EVENT_PAGE_SIZE = 50;
+const EVENT_MAX_PAGES = 100;
 
 export interface RewardsOpts {
-  cycle: number;
+  cycle?: number;
   bond?: number;
+}
+
+interface ClaimScan {
+  claimed: Map<string, bigint>;
+  bondIndices: Set<number>;
+  cyclesSeen: Set<number>;
+  truncated: boolean;
+}
+
+interface RewardRow {
+  cycle: number;
+  bondIndex?: number;
+  claimable: bigint;
+  claimed: bigint;
+}
+
+function legKey(cycle: number, bondIndex?: number): string {
+  return `${cycle}:${bondIndex === undefined ? 'stx' : bondIndex}`;
+}
+
+function legLabel(bondIndex?: number): string {
+  return bondIndex === undefined ? 'STX-only' : `bond ${bondIndex}`;
 }
 
 export async function rewardsCommand(ctx: Ctx, signerManagerArg: string | undefined, opts: RewardsOpts): Promise<void> {
   const signerManager = signerManagerArg ?? `${resolveStxAddress(ctx)}.signer-manager`;
-  const isBond = opts.bond !== undefined;
-  const leg = await fetchSignerRewardLeg(ctx, {
-    signer: signerManager,
-    rewardCycle: opts.cycle,
-    bondIndex: opts.bond,
-  });
 
-  output(ctx, { signerManager, rewardCycle: opts.cycle, bondIndex: opts.bond ?? null, ...leg }, () => {
-    printSection(`Rewards — ${explorerLink(ctx.config, signerManager)}`);
-    printRows([
-      ['leg', isBond ? `bond ${opts.bond} @ cycle ${opts.cycle}` : `STX-only cycle ${opts.cycle}`],
-      ['earned (claimable)', sats(leg.earned)],
-      ['settled unclaimed', sats(leg.unclaimed)],
-      ['rewards-per-token settled', leg.rptSettled],
-      ['shares', isBond ? sats(leg.shares) : stx(leg.shares)],
-    ]);
-  });
+  const [pox, scan] = await Promise.all([fetchPoxInfo(ctx.net), scanClaims(ctx, signerManager)]);
+  const currentCycle = pox.rewardCycleId;
+  const firstPox5 = resolveFirstPox5Cycle(ctx, pox);
+
+  const cycles = resolveCycles(opts, { currentCycle, firstPox5, seen: scan.cyclesSeen });
+  const bondLegs: (number | undefined)[] =
+    opts.bond !== undefined ? [opts.bond] : [undefined, ...[...scan.bondIndices].sort((a, b) => a - b)];
+
+  const grid = await Promise.all(
+    cycles.flatMap((cycle) =>
+      bondLegs.map(async (bondIndex): Promise<RewardRow> => {
+        const claimable = await fetchEarnedRewards(ctx, { signer: signerManager, rewardCycle: cycle, bondIndex });
+        return { cycle, bondIndex, claimable, claimed: scan.claimed.get(legKey(cycle, bondIndex)) ?? 0n };
+      }),
+    ),
+  );
+
+  const rows = grid
+    .filter((r) => r.claimable > 0n || r.claimed > 0n)
+    .sort((a, b) => b.cycle - a.cycle || legOrder(a.bondIndex) - legOrder(b.bondIndex));
+
+  const totalClaimable = rows.reduce((acc, r) => acc + r.claimable, 0n);
+  const totalClaimed = rows.reduce((acc, r) => acc + r.claimed, 0n);
+  const cyclesLabel =
+    cycles.length === 1
+      ? String(cycles[0])
+      : `${Math.min(...cycles)}–${Math.max(...cycles)} (current ${currentCycle})`;
+
+  output(
+    ctx,
+    {
+      signerManager,
+      currentCycle,
+      firstPox5Cycle: firstPox5 ?? null,
+      totals: { claimable: totalClaimable, claimed: totalClaimed },
+      rewards: rows.map((r) => ({
+        cycle: r.cycle,
+        bondIndex: r.bondIndex ?? null,
+        leg: legLabel(r.bondIndex),
+        claimable: r.claimable,
+        claimed: r.claimed,
+      })),
+      truncated: scan.truncated || undefined,
+    },
+    () => {
+      printSection(`Rewards — ${explorerLink(ctx.config, signerManager)}`);
+      printRows([
+        ['cycles', cyclesLabel],
+        ['total claimable', sats(totalClaimable)],
+        ['total claimed', sats(totalClaimed)],
+      ]);
+
+      if (rows.length === 0) {
+        printNote(`no rewards for ${signerManager} across cycles ${cyclesLabel}`);
+      } else {
+        printRewardTable(rows);
+      }
+
+      printNote('claimable = claimable now (pull it with `pox5 claim-rewards --cycle <n>`); claimed = reconstructed from claim-rewards events');
+      if (scan.truncated) {
+        printNote(`event scan stopped at ${EVENT_MAX_PAGES * EVENT_PAGE_SIZE} events — claimed history may be incomplete`);
+      }
+    },
+  );
+}
+
+function legOrder(bondIndex?: number): number {
+  return bondIndex === undefined ? -1 : bondIndex;
+}
+
+function resolveCycles(
+  opts: RewardsOpts,
+  ctx: { currentCycle: number; firstPox5?: number; seen: Set<number> },
+): number[] {
+  if (opts.cycle !== undefined) return [opts.cycle];
+  const hi = Math.max(ctx.currentCycle, ...ctx.seen);
+  const lo = ctx.firstPox5 ?? (ctx.seen.size > 0 ? Math.min(...ctx.seen) : hi);
+  const set = new Set<number>(ctx.seen);
+  for (let c = lo; c <= hi; c++) set.add(c);
+  return [...set].sort((a, b) => b - a);
+}
+
+function printRewardTable(rows: RewardRow[]): void {
+  const header = ['cycle', 'leg', 'claimable', 'claimed'];
+  const body = rows.map((r) => [
+    String(r.cycle),
+    legLabel(r.bondIndex),
+    r.claimable > 0n ? sats(r.claimable) : '—',
+    r.claimed > 0n ? sats(r.claimed) : '—',
+  ]);
+  const alignRight = [true, false, false, false];
+  const widths = header.map((h, i) => Math.max(h.length, ...body.map((row) => row[i]!.length)));
+  const line = (cells: string[]): string =>
+    ('  ' + cells.map((c, i) => (alignRight[i] ? c.padStart(widths[i]!) : c.padEnd(widths[i]!))).join('   ')).replace(/\s+$/, '');
+  process.stdout.write(dim(line(header)) + '\n');
+  for (const row of body) process.stdout.write(line(row) + '\n');
+}
+
+async function scanClaims(ctx: Ctx, signerManager: string): Promise<ClaimScan> {
+  const contractId = `${ctx.net.network.bootAddress}.pox-5`;
+  const claimed = new Map<string, bigint>();
+  const bondIndices = new Set<number>();
+  const cyclesSeen = new Set<number>();
+  let offset = 0;
+
+  for (let page = 0; page < EVENT_MAX_PAGES; page++) {
+    const url = `${ctx.config.extendedApiUrl}/v1/contract/${contractId}/events?limit=${EVENT_PAGE_SIZE}&offset=${offset}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new CliError(`pox-5 events request failed (HTTP ${res.status})`);
+    const results = ((await res.json()) as { results?: { contract_log?: { value?: { hex?: string } } }[] }).results ?? [];
+    for (const ev of results) {
+      accumulate(ev.contract_log?.value?.hex, signerManager, { claimed, bondIndices, cyclesSeen });
+    }
+    offset += EVENT_PAGE_SIZE;
+    if (results.length < EVENT_PAGE_SIZE) return { claimed, bondIndices, cyclesSeen, truncated: false };
+  }
+  return { claimed, bondIndices, cyclesSeen, truncated: true };
+}
+
+function accumulate(
+  hex: string | undefined,
+  signerManager: string,
+  acc: { claimed: Map<string, bigint>; bondIndices: Set<number>; cyclesSeen: Set<number> },
+): void {
+  if (!hex) return;
+  let cv: ClarityValue;
+  try {
+    cv = hexToCV(hex);
+  } catch {
+    return;
+  }
+  if (cv.type !== ClarityType.Tuple) return;
+  const f = (cv as { value: Record<string, ClarityValue> }).value;
+  const topic = f['topic'] ? cvToValue(f['topic']) : undefined;
+
+  if (topic === 'setup-bond') {
+    if (f['bond-index']) acc.bondIndices.add(Number((f['bond-index'] as { value: bigint }).value));
+    return;
+  }
+  if (topic !== 'claim-rewards') return;
+  if (!f['signer-manager'] || cvToValue(f['signer-manager']) !== signerManager) return;
+
+  const cycle = Number((f['reward-cycle'] as { value: bigint }).value);
+  acc.cyclesSeen.add(cycle);
+
+  const stxLeg = f['stx-rewards'];
+  if (stxLeg && stxLeg.type === ClarityType.Tuple) {
+    addClaimed(acc.claimed, cycle, undefined, legEarned(stxLeg));
+  }
+
+  const bondList = f['bond-rewards'];
+  if (bondList && bondList.type === ClarityType.List) {
+    for (const item of (bondList as { value: ClarityValue[] }).value) {
+      if (item.type !== ClarityType.Tuple) continue;
+      const t = (item as { value: Record<string, ClarityValue> }).value;
+      const bondIndex = Number((t['bond-index'] as { value: bigint }).value);
+      acc.bondIndices.add(bondIndex);
+      addClaimed(acc.claimed, cycle, bondIndex, (t['earned'] as { value: bigint }).value);
+    }
+  }
+}
+
+function legEarned(tuple: ClarityValue): bigint {
+  const inner = (tuple as { value: Record<string, ClarityValue> }).value;
+  return (inner['earned'] as { value: bigint }).value;
+}
+
+function addClaimed(claimed: Map<string, bigint>, cycle: number, bondIndex: number | undefined, amount: bigint): void {
+  const key = legKey(cycle, bondIndex);
+  claimed.set(key, (claimed.get(key) ?? 0n) + amount);
 }

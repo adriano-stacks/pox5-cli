@@ -1,4 +1,6 @@
+import { TransactionSigner, broadcastTransaction, type StacksTransactionWire } from '@stacks/transactions';
 import type { Ctx } from './context.js';
+import { CliError } from './errors.js';
 import { clearProgress, progress } from './output.js';
 
 export interface TxOutcome {
@@ -9,6 +11,25 @@ export interface TxOutcome {
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+// Sign, broadcast (throwing on mempool rejection), then wait for the on-chain result.
+export async function signAndConfirm(
+  ctx: Ctx,
+  tx: StacksTransactionWire,
+  privateKey: string,
+): Promise<{ txid: string; outcome: TxOutcome }> {
+  const signer = new TransactionSigner(tx);
+  signer.signOrigin(privateKey);
+  const result = (await broadcastTransaction({ transaction: signer.getTxInComplete(), ...ctx.net })) as {
+    txid?: string;
+    error?: string;
+    reason?: string;
+  };
+  if (result.error) throw new CliError(`broadcast rejected: ${result.reason ?? result.error}`);
+  const txid = result.txid!;
+  const outcome = await confirmTx(ctx, txid);
+  return { txid, outcome };
+}
 
 export async function confirmTx(
   ctx: Ctx,

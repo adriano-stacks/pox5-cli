@@ -2,6 +2,10 @@ import {
   bondPeriodToBurnHeight,
   bondPeriodToRewardCycle,
   bondPhaseRanges,
+  burnHeightToDistributionIndex,
+  burnHeightToRewardCycle,
+  currentDistributionCycle,
+  distributionCycleToBurnHeight,
   fetchBondAllowance,
   fetchBondL1UnlockHeight,
   fetchPoxInfo,
@@ -14,7 +18,66 @@ import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { explorerLink } from '../explorer.js';
 import { fetchBondConfig, resolveFirstPox5Cycle, withFirstPox5Cycle } from '../pox.js';
-import { bps, dim, output, percent, printNote, printRows, printSection, sats, type Row } from '../output.js';
+import { bitcoinBlocks, bps, dim, output, percent, printNote, printRows, printSection, sats, type Row } from '../output.js';
+
+const BOND_END_OFFSET_PERIODS = 6;
+
+interface RewardsTiming {
+  distLen: number;
+  windowStartHeight: number;
+  windowEndHeight: number;
+  count: number;
+  firstHeight: number;
+  firstCycle: number;
+  lastHeight: number;
+  lastCycle: number;
+  next?: { height: number; cycle: number; runnableAt: number; runnableNow: boolean };
+}
+
+function rewardsTiming(p: PoxInfo, bondIndex: number, now: number): RewardsTiming {
+  const distLen = Math.floor(p.rewardCycleLength / 2);
+  const calcHeightOf = (d: number) => distributionCycleToBurnHeight({ distributionCycle: d, poxInfo: p }) - 1;
+  const cycleOf = (h: number) => burnHeightToRewardCycle({ burnHeight: h, poxInfo: p });
+  const windowStartHeight = bondPeriodToBurnHeight({ bondIndex, poxInfo: p });
+  const windowEndHeight = bondPeriodToBurnHeight({ bondIndex: bondIndex + BOND_END_OFFSET_PERIODS, poxInfo: p });
+
+  // a distribution at calc height H credits this bond iff windowStart < H <= windowEnd
+  let firstD = burnHeightToDistributionIndex({ burnHeight: windowStartHeight, poxInfo: p });
+  while (calcHeightOf(firstD) <= windowStartHeight) firstD++;
+  let lastD = burnHeightToDistributionIndex({ burnHeight: windowEndHeight, poxInfo: p });
+  while (calcHeightOf(lastD) > windowEndHeight) lastD--;
+  while (calcHeightOf(lastD + 1) <= windowEndHeight) lastD++;
+  const count = Math.max(0, lastD - firstD + 1);
+
+  const firstHeight = calcHeightOf(firstD);
+  const lastHeight = calcHeightOf(lastD);
+
+  let next: RewardsTiming['next'];
+  const nd = Math.max(firstD, currentDistributionCycle(p));
+  if (count > 0 && nd <= lastD) {
+    const height = calcHeightOf(nd);
+    next = { height, cycle: cycleOf(height), runnableAt: height + 1, runnableNow: now >= height + 1 };
+  }
+
+  return {
+    distLen,
+    windowStartHeight,
+    windowEndHeight,
+    count,
+    firstHeight,
+    firstCycle: cycleOf(firstHeight),
+    lastHeight,
+    lastCycle: cycleOf(lastHeight),
+    next,
+  };
+}
+
+function nextDistributionText(r: RewardsTiming, now: number): string {
+  if (!r.next) return r.count > 0 ? `reward window closed (last at calc height ${r.lastHeight})` : 'none';
+  const { height, cycle, runnableAt, runnableNow } = r.next;
+  if (runnableNow) return `calc height ${height} (settles cycle ${cycle}) — runnable now`;
+  return `calc height ${height} (settles cycle ${cycle}) — runnable once Bitcoin ≥ ${runnableAt} (in ${bitcoinBlocks(runnableAt - now)})`;
+}
 
 const EVENT_PAGE_SIZE = 50;
 const EVENT_MAX_PAGES = 100;
@@ -90,7 +153,13 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
 
   const firstPox5 = resolveFirstPox5Cycle(ctx, pox);
   let schedule:
-    | { firstRewardCycle: number; openBitcoinBlockHeight: number; status: string; l1UnlockHeight: bigint }
+    | {
+        firstRewardCycle: number;
+        openBitcoinBlockHeight: number;
+        status: string;
+        l1UnlockHeight: bigint;
+        rewards: RewardsTiming;
+      }
     | undefined;
   if (firstPox5 !== undefined) {
     const p = withFirstPox5Cycle(pox, firstPox5);
@@ -99,6 +168,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       openBitcoinBlockHeight: bondPeriodToBurnHeight({ bondIndex, poxInfo: p }),
       status: phaseAt(pox.currentBurnchainBlockHeight, p, bondIndex),
       l1UnlockHeight: await fetchBondL1UnlockHeight({ bondIndex, ...ctx.net }),
+      rewards: rewardsTiming(p, bondIndex, pox.currentBurnchainBlockHeight),
     };
   }
 
@@ -187,6 +257,22 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
           ['open Bitcoin block height', schedule.openBitcoinBlockHeight],
           ['L1 unlock height', schedule.l1UnlockHeight],
         ]);
+
+        const r = schedule.rewards;
+        const now = pox.currentBurnchainBlockHeight;
+        printSection('Rewards distribution (waterfall)');
+        printRows([
+          ['cadence', `every ${bitcoinBlocks(r.distLen)} (twice per reward cycle)`],
+          ['credited at calc height', `${r.windowStartHeight + 1} → ${r.windowEndHeight}`],
+          ['distributions', r.count > 0 ? `${r.count}, settling reward cycles ${r.firstCycle} → ${r.lastCycle}` : 'none — bond never active for a distribution'],
+          ['first distribution', r.count > 0 ? `calc height ${r.firstHeight} → settles cycle ${r.firstCycle}` : null],
+          ['next distribution', nextDistributionText(r, now)],
+        ]);
+        printNote(
+          `a calculate-rewards run only credits this bond when its calculation height H satisfies ` +
+            `${r.windowStartHeight} < H ≤ ${r.windowEndHeight}; include bond ${bondIndex} (canonical order) in --bond, ` +
+            `and fund the contract with unaccounted sBTC before that run`,
+        );
       } else {
         printNote('unavailable — set POX5_FIRST_POX5_CYCLE / --first-pox5-cycle to derive');
       }
