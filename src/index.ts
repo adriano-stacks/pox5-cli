@@ -11,6 +11,8 @@ import { bondsCommand } from './commands/bonds.js';
 import { scheduleCommand } from './commands/schedule.js';
 import { quoteCommand } from './commands/quote.js';
 import { rewardsCommand } from './commands/rewards.js';
+import { calculateRewardsCommand } from './commands/calculate-rewards.js';
+import { claimRewardsCommand } from './commands/claim-rewards.js';
 import { totalsCommand } from './commands/totals.js';
 import { signerCommand } from './commands/signer.js';
 import { signersCommand } from './commands/signers.js';
@@ -90,6 +92,14 @@ const collectList = (v: string, acc: string[] = []): string[] => {
   }
   return acc;
 };
+const collectInts = (name: string) => (v: string, acc: number[] = []): number[] => {
+  for (const item of v.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const n = Number(item);
+    if (!Number.isInteger(n) || n < 0) throw new CliError(`${name} must be non-negative integers (got "${item}")`);
+    acc.push(n);
+  }
+  return acc;
+};
 
 const program = new Command();
 
@@ -151,15 +161,47 @@ program
 
 program
   .command('rewards')
-  .description('earned/unclaimed sBTC for a signer-manager on a bond or STX cycle leg')
-  .argument('<signerManager>', 'signer-manager principal')
-  .option('--bond <index>', 'bond leg', intArg('--bond'))
-  .option('--cycle <cycle>', 'STX-only reward cycle leg', intArg('--cycle'))
-  .action(async (signer, o, cmd) => rewardsCommand(ctxOf(cmd), signer, { bond: o.bond, cycle: o.cycle }));
+  .description('earned/unclaimed sBTC for a signer-manager in a reward cycle (optionally a bond leg)')
+  .argument('[signerManager]', 'signer-manager principal (default: <POX5_STX_ADDRESS>.signer-manager)')
+  .requiredOption('--cycle <cycle>', 'reward cycle to inspect', intArg('--cycle'))
+  .option('--bond <index>', 'inspect this bond leg within the cycle (default: the STX-only leg)', intArg('--bond'))
+  .action(async (signer, o, cmd) => rewardsCommand(ctxOf(cmd), signer, { cycle: o.cycle, bond: o.bond }));
+
+program
+  .command('calculate-rewards')
+  .description('settle a distribution cycle: run the sBTC reward waterfall over the active bonds; dry run unless --broadcast')
+  .option('--bond <index>', 'an active bond to include, in canonical order (descending stx-value-ratio, ascending index; repeatable, comma-separated)', collectInts('--bond'))
+  .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
+  .action(async (o, cmd) =>
+    calculateRewardsCommand(ctxOf(cmd), {
+      bonds: o.bond ?? [],
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    }),
+  );
+
+program
+  .command('claim-rewards')
+  .description('pull a signer-manager’s settled sBTC out of the contract (routes through the manager); dry run unless --broadcast')
+  .requiredOption('--cycle <cycle>', 'reward cycle to claim (the just-settled cycle = current distribution cycle − 1)', intArg('--cycle'))
+  .option('--bond <index>', 'a bond leg to claim (repeatable, comma-separated)', collectInts('--bond'))
+  .option('--signer-manager <principal>', 'signer-manager to claim for (default: <sender>.signer-manager)')
+  .option('--fee <ustx>', 'transaction fee in microSTX (default: 10000)', bigIntArg('--fee'))
+  .option('--broadcast', 'sign with POX5_STX_PRIVATE_KEY and broadcast (default: dry run)')
+  .action(async (o, cmd) =>
+    claimRewardsCommand(ctxOf(cmd), {
+      signerManager: o.signerManager,
+      cycle: o.cycle,
+      bonds: o.bond ?? [],
+      fee: o.fee ?? 10000n,
+      broadcast: o.broadcast === true,
+    }),
+  );
 
 program
   .command('totals')
-  .description('protocol-wide totals (sBTC staked; per-bond fill or per-cycle STX)')
+  .description('protocol-wide totals (sBTC staked, reserve fund; per-bond fill or per-cycle STX)')
   .option('--bond <index>', 'include this bond’s fill + shares', intArg('--bond'))
   .option('--cycle <cycle>', 'include this cycle’s STX stacked + shares', intArg('--cycle'))
   .action(async (o, cmd) => totalsCommand(ctxOf(cmd), { bond: o.bond, cycle: o.cycle }));

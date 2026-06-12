@@ -1,48 +1,31 @@
-import {
-  fetchEarned,
-  fetchSignerRewardsPerTokenSettled,
-  fetchSignerSharesStakedByBond,
-  fetchSignerSharesStakedByCycle,
-  fetchSignerUnclaimedRewards,
-} from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { resolveStxAddress } from '../address.js';
 import { explorerLink } from '../explorer.js';
+import { fetchSignerRewardLeg } from '../pox.js';
 import { output, printRows, printSection, sats, stx } from '../output.js';
 
 export interface RewardsOpts {
+  cycle: number;
   bond?: number;
-  cycle?: number;
 }
 
-export async function rewardsCommand(ctx: Ctx, signerManager: string, opts: RewardsOpts): Promise<void> {
-  if ((opts.bond === undefined) === (opts.cycle === undefined)) {
-    throw new CliError('provide exactly one of --bond <index> or --cycle <cycle>');
-  }
+export async function rewardsCommand(ctx: Ctx, signerManagerArg: string | undefined, opts: RewardsOpts): Promise<void> {
+  const signerManager = signerManagerArg ?? `${resolveStxAddress(ctx)}.signer-manager`;
   const isBond = opts.bond !== undefined;
-  const index = (isBond ? opts.bond : opts.cycle)!;
+  const leg = await fetchSignerRewardLeg(ctx, {
+    signer: signerManager,
+    rewardCycle: opts.cycle,
+    bondIndex: opts.bond,
+  });
 
-  const [earned, unclaimed, rptSettled, shares] = await Promise.all([
-    fetchEarned({ signerManager, index, isBond, ...ctx.net }),
-    fetchSignerUnclaimedRewards({ signerManager, index, isBond, ...ctx.net }),
-    fetchSignerRewardsPerTokenSettled({ signerManager, index, isBond, ...ctx.net }),
-    isBond
-      ? fetchSignerSharesStakedByBond({ signerManager, bondIndex: index, ...ctx.net })
-      : fetchSignerSharesStakedByCycle({ signerManager, rewardCycle: index, ...ctx.net }),
-  ]);
-
-  output(
-    ctx,
-    { signerManager, leg: isBond ? 'bond' : 'stx-cycle', index, earned, unclaimed, rptSettled, shares },
-    () => {
-      printSection(`Rewards — ${explorerLink(ctx.config, signerManager)}`);
-      printRows([
-        ['leg', isBond ? `bond ${index}` : `STX cycle ${index}`],
-        ['earned (claimable)', sats(earned)],
-        ['settled unclaimed', sats(unclaimed)],
-        ['rewards-per-token settled', rptSettled],
-        ['shares', isBond ? sats(shares) : stx(shares)],
-      ]);
-    },
-  );
+  output(ctx, { signerManager, rewardCycle: opts.cycle, bondIndex: opts.bond ?? null, ...leg }, () => {
+    printSection(`Rewards — ${explorerLink(ctx.config, signerManager)}`);
+    printRows([
+      ['leg', isBond ? `bond ${opts.bond} @ cycle ${opts.cycle}` : `STX-only cycle ${opts.cycle}`],
+      ['earned (claimable)', sats(leg.earned)],
+      ['settled unclaimed', sats(leg.unclaimed)],
+      ['rewards-per-token settled', leg.rptSettled],
+      ['shares', isBond ? sats(leg.shares) : stx(leg.shares)],
+    ]);
+  });
 }

@@ -6,7 +6,9 @@ import {
   bufferCV,
   cvToString,
   fetchCallReadOnlyFunction,
+  noneCV,
   principalCV,
+  someCV,
   uintCV,
   type ClarityValue,
 } from '@stacks/transactions';
@@ -125,6 +127,73 @@ export async function fetchSbtcBalance(
   } catch {
     return undefined;
   }
+}
+
+export interface RewardsState {
+  reserveBalance: bigint;
+  rewardsBalance: bigint;
+  newRewards: bigint;
+  lastAccounted: bigint;
+  lastComputeHeight: number;
+}
+
+async function readPoxUint(ctx: Ctx, functionName: string): Promise<bigint> {
+  const result = await callPoxReadOnly(ctx, functionName, []);
+  if (result.type !== ClarityType.UInt) {
+    throw new CliError(`${functionName} returned unexpected type ${result.type}`);
+  }
+  return (result as { value: bigint }).value;
+}
+
+export async function fetchRewardsState(ctx: Ctx): Promise<RewardsState> {
+  const [reserveBalance, rewardsBalance, newRewards, lastAccounted, lastComputeHeight] = await Promise.all([
+    readPoxUint(ctx, 'get-reserve-balance'),
+    readPoxUint(ctx, 'get-rewards'),
+    readPoxUint(ctx, 'get-new-rewards'),
+    readPoxUint(ctx, 'get-last-accounted-rewards-only'),
+    readPoxUint(ctx, 'get-last-reward-compute-height'),
+  ]);
+  return { reserveBalance, rewardsBalance, newRewards, lastAccounted, lastComputeHeight: Number(lastComputeHeight) };
+}
+
+export interface SignerRewardLeg {
+  earned: bigint;
+  unclaimed: bigint;
+  rptSettled: bigint;
+  shares: bigint;
+}
+
+export interface RewardLegArgs {
+  signer: string;
+  rewardCycle: number;
+  bondIndex?: number;
+}
+
+async function readSignerLegUint(ctx: Ctx, functionName: string, opts: RewardLegArgs): Promise<bigint> {
+  const bondArg = opts.bondIndex === undefined ? noneCV() : someCV(uintCV(opts.bondIndex));
+  const result = await callPoxReadOnly(ctx, functionName, [
+    principalCV(opts.signer),
+    uintCV(opts.rewardCycle),
+    bondArg,
+  ]);
+  if (result.type !== ClarityType.UInt) {
+    throw new CliError(`${functionName} returned unexpected type ${result.type}`);
+  }
+  return (result as { value: bigint }).value;
+}
+
+export async function fetchEarnedRewards(ctx: Ctx, opts: RewardLegArgs): Promise<bigint> {
+  return readSignerLegUint(ctx, 'get-earned', opts);
+}
+
+export async function fetchSignerRewardLeg(ctx: Ctx, opts: RewardLegArgs): Promise<SignerRewardLeg> {
+  const [earned, unclaimed, rptSettled, shares] = await Promise.all([
+    readSignerLegUint(ctx, 'get-earned', opts),
+    readSignerLegUint(ctx, 'get-signer-unclaimed-rewards-for-cycle', opts),
+    readSignerLegUint(ctx, 'get-signer-rewards-per-token-settled-for-cycle', opts),
+    readSignerLegUint(ctx, 'get-signer-shares-staked-for-cycle', opts),
+  ]);
+  return { earned, unclaimed, rptSettled, shares };
 }
 
 export async function fetchHasAnnouncedL1EarlyExit(

@@ -5,7 +5,8 @@ import {
   fetchTotalUstxStacked,
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
-import { output, printRows, printSection, sats, stx, type Row } from '../output.js';
+import { fetchRewardsState } from '../pox.js';
+import { output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
 export interface TotalsOpts {
   bond?: number;
@@ -13,8 +14,9 @@ export interface TotalsOpts {
 }
 
 export async function totalsCommand(ctx: Ctx, opts: TotalsOpts): Promise<void> {
-  const [sbtcTotal, bond, cycle] = await Promise.all([
+  const [sbtcTotal, rewards, bond, cycle] = await Promise.all([
     fetchTotalSbtcStaked(ctx.net),
+    fetchRewardsState(ctx),
     opts.bond === undefined
       ? undefined
       : Promise.all([
@@ -29,8 +31,13 @@ export async function totalsCommand(ctx: Ctx, opts: TotalsOpts): Promise<void> {
         ]).then(([ustx, shares]) => ({ index: opts.cycle!, ustx, shares })),
   ]);
 
-  output(ctx, { sbtcTotal, bond: bond ?? null, cycle: cycle ?? null }, () => {
-    const rows: Row[] = [['total sBTC staked', sats(sbtcTotal)]];
+  output(ctx, { sbtcTotal, rewards, bond: bond ?? null, cycle: cycle ?? null }, () => {
+    const rows: Row[] = [
+      ['total sBTC staked', sats(sbtcTotal)],
+      ['reserve fund', sats(rewards.reserveBalance)],
+      ['undistributed rewards', sats(rewards.newRewards)],
+      ['last distribution height', rewards.lastComputeHeight === 0 ? 'never' : `${rewards.lastComputeHeight} (Bitcoin)`],
+    ];
     if (bond) {
       rows.push([`bond ${bond.index} filled`, sats(bond.filledSbtc)]);
       rows.push([`bond ${bond.index} shares`, sats(bond.shares)]);
@@ -41,5 +48,6 @@ export async function totalsCommand(ctx: Ctx, opts: TotalsOpts): Promise<void> {
     }
     printSection('Protocol totals');
     printRows(rows);
+    printNote('the reserve fund takes 15% of each distribution; undistributed rewards settle on the next calculate-rewards');
   });
 }
