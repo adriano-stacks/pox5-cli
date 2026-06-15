@@ -1,39 +1,33 @@
 import {
-  assembleLockupProofFromBlock,
   bondPeriodToBurnHeight,
   bondPeriodToRewardCycle,
-  buildDefaultUnlockScript,
+  buildLockOutputScript,
+  buildLockProofFromBlock,
+  buildRegisterForBond,
+  buildUnlockScript,
   computeBondUnlockHeight,
-  computeP2wshOutputScript,
   fetchBondAllowance,
   fetchBondMembership,
+  fetchConstructLockupOutputScript,
   fetchPoxInfo,
+  fetchProtocolBond,
   fetchSignerInfo,
   isInPreparePhase,
   minUstxForSatsAmount,
   type BondL1LockupOutput,
 } from '@stacks/bitcoin-staking';
-import { bytesToHex, hexToBytes } from '@stacks/common';
+import { bytesToHex } from '@stacks/common';
 import {
-  bufferCV,
   fetchNonce,
   getAddressFromPrivateKey,
-  listCV,
-  makeUnsignedContractCall,
-  noneCV,
-  principalCV,
   privateKeyToPublic,
   publicKeyToHex,
-  responseOkCV,
-  tupleCV,
-  uintCV,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import {
   btcNetwork,
-  buildLockupScript,
   fetchBlockHashAtHeight,
   fetchBlockHeader,
   fetchBlockTxids,
@@ -43,7 +37,7 @@ import {
   type BtcNetworkName,
 } from '../btc.js';
 import { bitcoinTxLink, explorerLink, explorerTxLink } from '../explorer.js';
-import { fetchBondConfig, fetchLockupOutputScript, requirePoxWithBondCycle } from '../pox.js';
+import { requirePoxWithBondCycle } from '../pox.js';
 import { signAndConfirm, txStatusLabel } from '../tx.js';
 import {
   bitcoinBlocks,
@@ -104,7 +98,10 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
 
   const key = resolveBtcKey(btcNetwork(opts.btcNetwork));
 
-  const [bond, poxRaw] = await Promise.all([fetchBondConfig(ctx, opts.bond), fetchPoxInfo(ctx.net)]);
+  const [bond, poxRaw] = await Promise.all([
+    fetchProtocolBond({ bondIndex: opts.bond, ...ctx.net }),
+    fetchPoxInfo(ctx.net),
+  ]);
   if (!bond) throw new CliError(`bond ${opts.bond} is not configured on this contract`);
   const pox = requirePoxWithBondCycle(ctx, poxRaw);
 
@@ -129,21 +126,22 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
   ]);
 
   const unlockHeight = computeBondUnlockHeight({ bondIndex: opts.bond, poxInfo: pox });
-  const unlockBytes = buildDefaultUnlockScript(key.publicKey);
-  const expectedScript = computeP2wshOutputScript(
-    buildLockupScript({
-      stxAddress: sender,
-      unlockHeight,
-      stakerUnlockBytes: unlockBytes,
-      earlyUnlockBytes: bond.earlyUnlockBytes,
-    }),
-  );
-  const onChainOutputScript = await fetchLockupOutputScript(ctx, {
-    staker: sender,
+  const unlockBytes = buildUnlockScript(key.publicKey);
+  const expectedScript = buildLockOutputScript({
+    stxAddress: sender,
     unlockHeight,
-    stakerUnlockBytes: unlockBytes,
+    unlockBytes,
     earlyUnlockBytes: bond.earlyUnlockBytes,
   });
+  const onChainOutputScript = bytesToHex(
+    await fetchConstructLockupOutputScript({
+      stxAddress: sender,
+      unlockHeight,
+      unlockBytes,
+      earlyUnlockBytes: bond.earlyUnlockBytes,
+      ...ctx.net,
+    }),
+  );
   if (onChainOutputScript !== bytesToHex(expectedScript)) {
     throw new CliError(
       'locally derived lockup script does not match the contract\'s construct-lockup-output-script — ' +
@@ -153,7 +151,7 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
 
   let lockup: BondL1LockupOutput;
   try {
-    lockup = assembleLockupProofFromBlock({
+    lockup = buildLockProofFromBlock({
       txHex,
       header,
       blockHeight: lockBlock.height,
@@ -180,34 +178,11 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
     );
   }
 
-  const toBytes = (v: Uint8Array | string): Uint8Array => (typeof v === 'string' ? hexToBytes(v) : v);
-  const tx = await makeUnsignedContractCall({
-    contractAddress: ctx.net.network.bootAddress,
-    contractName: 'pox-5',
-    functionName: 'register-for-bond',
-    functionArgs: [
-      uintCV(opts.bond),
-      principalCV(signerManager),
-      uintCV(amountUstx),
-      responseOkCV(
-        tupleCV({
-          outputs: listCV([
-            tupleCV({
-              height: uintCV(lockup.height),
-              tx: bufferCV(toBytes(lockup.tx)),
-              'output-index': uintCV(lockup.outputIndex),
-              header: bufferCV(toBytes(lockup.header)),
-              'leaf-hashes': listCV(lockup.leafHashes.map((h) => bufferCV(toBytes(h)))),
-              'tx-count': uintCV(lockup.txCount),
-              'tx-index': uintCV(lockup.txIndex),
-              amount: uintCV(lockup.amount),
-            }),
-          ]),
-          'staker-unlock-bytes': bufferCV(unlockBytes),
-        }),
-      ),
-      noneCV(),
-    ],
+  const tx = await buildRegisterForBond({
+    bondIndex: opts.bond,
+    signerManager,
+    amountUstx,
+    lockup: { kind: 'btc', outputs: [lockup], unlockBytes },
     publicKey,
     fee: opts.fee,
     nonce,

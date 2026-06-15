@@ -1,4 +1,4 @@
-import { buildDefaultUnlockScript } from '@stacks/bitcoin-staking';
+import { buildUnlockScript } from '@stacks/bitcoin-staking';
 import { bytesToHex } from '@stacks/common';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
@@ -17,7 +17,7 @@ export function unlockScriptCommand(ctx: Ctx, publicKeyArg?: string): void {
     );
   }
 
-  const scriptHex = bytesToHex(buildDefaultUnlockScript(publicKey));
+  const scriptHex = bytesToHex(buildUnlockScript(publicKey));
   const breakdown = [
     { bytes: '21', op: 'OP_PUSHBYTES_33', meaning: 'push the 33-byte public key that follows' },
     { bytes: publicKey, op: 'data', meaning: 'compressed secp256k1 public key' },

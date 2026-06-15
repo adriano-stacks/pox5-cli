@@ -4,6 +4,8 @@ import {
   currentDistributionCycle,
   distributionCycleToBurnHeight,
   fetchPoxInfo,
+  fetchProtocolBond,
+  type Bond,
 } from '@stacks/bitcoin-staking';
 import {
   fetchNonce,
@@ -15,7 +17,7 @@ import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
-import { fetchBondConfig, fetchRewardsState, type BondConfig } from '../pox.js';
+import { fetchRewardsState } from '../pox.js';
 import { discoverActiveBonds } from '../projection.js';
 import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { bps, output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
@@ -45,14 +47,14 @@ export async function calculateRewardsCommand(ctx: Ctx, opts: CalculateRewardsOp
 
   const autoDiscovered = opts.bonds.length === 0;
   let bonds: number[];
-  let configs: (BondConfig | undefined)[];
+  let configs: (Bond | undefined)[];
   if (autoDiscovered) {
     const active = await discoverActiveBonds(ctx, pox, calcHeight);
     bonds = active.map((a) => a.index);
     configs = active.map((a) => a.config);
   } else {
     bonds = opts.bonds;
-    configs = await Promise.all(bonds.map((i) => fetchBondConfig(ctx, i)));
+    configs = await Promise.all(bonds.map((i) => fetchProtocolBond({ bondIndex: i, ...ctx.net })));
   }
 
   const [state, nonce] = await Promise.all([
@@ -84,7 +86,7 @@ export async function calculateRewardsCommand(ctx: Ctx, opts: CalculateRewardsOp
   if (missing.length > 0) {
     blockers.push(`bond(s) ${missing.join(', ')} are not configured (ERR_BOND_NOT_FOUND u7)`);
   }
-  const present = configs.filter((c): c is BondConfig => c !== undefined);
+  const present = configs.filter((c): c is Bond => c !== undefined);
   for (let i = 1; i < present.length; i++) {
     const prev = present[i - 1]!;
     const cur = present[i]!;

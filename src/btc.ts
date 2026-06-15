@@ -1,7 +1,5 @@
-import { createHash } from 'node:crypto';
 import * as btc from '@scure/btc-signer';
 import { signECDSA } from '@scure/btc-signer/utils.js';
-import { pushCScriptNum, toConsensusBuffStandardPrincipal } from '@stacks/bitcoin-staking';
 import { bytesToHex, hexToBytes } from '@stacks/common';
 import { privateKeyToPublic, publicKeyToHex } from '@stacks/transactions';
 import type { Config } from './config.js';
@@ -123,42 +121,6 @@ export async function broadcastBtcTx(config: Config, txHex: string): Promise<str
   const text = await res.text();
   if (!res.ok) throw new CliError(`Bitcoin broadcast rejected: ${text.slice(0, 300)}`);
   return text.trim();
-}
-
-function sha256(data: Uint8Array): Uint8Array {
-  return new Uint8Array(createHash('sha256').update(data).digest());
-}
-
-export function buildLockupScript(opts: {
-  stxAddress: string;
-  unlockHeight: number;
-  stakerUnlockBytes: Uint8Array;
-  earlyUnlockBytes: Uint8Array | string;
-}): Uint8Array {
-  const stakerCommitment = sha256(sha256(toConsensusBuffStandardPrincipal(opts.stxAddress)));
-  const earlyUnlockBytes =
-    typeof opts.earlyUnlockBytes === 'string' ? hexToBytes(opts.earlyUnlockBytes) : opts.earlyUnlockBytes;
-  const parts = [
-    Uint8Array.of(0x63),
-    pushCScriptNum(opts.unlockHeight),
-    Uint8Array.of(0xb1, 0x67, 0x82, 0x01, 0x20, 0x88, 0xa8, 0x20),
-    stakerCommitment,
-    Uint8Array.of(0x88),
-    earlyUnlockBytes,
-    Uint8Array.of(0x68, 0x69),
-    opts.stakerUnlockBytes,
-  ];
-  const out = new Uint8Array(parts.reduce((sum, p) => sum + p.length, 0));
-  let offset = 0;
-  for (const p of parts) {
-    out.set(p, offset);
-    offset += p.length;
-  }
-  return out;
-}
-
-export function stakerCommitmentPreimage(stxAddress: string): Uint8Array {
-  return sha256(toConsensusBuffStandardPrincipal(stxAddress));
 }
 
 export interface SingleKeyEarlyUnlock {

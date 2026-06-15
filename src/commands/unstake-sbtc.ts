@@ -1,19 +1,16 @@
+import { buildUnstakeSbtc, fetchBondMembership } from '@stacks/bitcoin-staking';
 import {
   Pc,
-  PostConditionMode,
   fetchNonce,
   getAddressFromPrivateKey,
-  makeUnsignedContractCall,
-  principalCV,
   privateKeyToPublic,
   publicKeyToHex,
-  uintCV,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
-import { fetchBondMembershipFull, fetchSbtcBalance, fetchSbtcContractId } from '../pox.js';
+import { fetchSbtcBalance, fetchSbtcContractId } from '../pox.js';
 import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { output, printNote, printRows, printSection, sbtc, stx, type Row } from '../output.js';
 
@@ -32,7 +29,7 @@ export async function unstakeSbtcCommand(ctx: Ctx, opts: UnstakeSbtcOpts): Promi
   const publicKey = publicKeyToHex(privateKeyToPublic(privateKey));
 
   const [membership, sbtcInfo, nonce] = await Promise.all([
-    fetchBondMembershipFull(ctx, sender),
+    fetchBondMembership({ address: sender, ...ctx.net }),
     fetchSbtcBalance(ctx, sender),
     fetchNonce({ address: sender, ...ctx.net }),
   ]);
@@ -61,17 +58,15 @@ export async function unstakeSbtcCommand(ctx: Ctx, opts: UnstakeSbtcOpts): Promi
       .willSendLte(opts.amountSats)
       .ft(sbtcContractId as `${string}.${string}`, 'sbtc-token'),
   ];
-  const tx = await makeUnsignedContractCall({
-    contractAddress: ctx.net.network.bootAddress,
-    contractName: 'pox-5',
-    functionName: 'unstake-sbtc',
-    functionArgs: [principalCV(signerManager), uintCV(opts.amountSats)],
+  const tx = await buildUnstakeSbtc({
+    signerManager,
+    amountToWithdrawSats: opts.amountSats,
     publicKey,
     fee: opts.fee,
     nonce,
     network: ctx.net.network,
     postConditions,
-    postConditionMode: PostConditionMode.Deny,
+    postConditionMode: 'deny',
   });
 
   const baseRows: Row[] = [

@@ -3,6 +3,7 @@ import {
   fetchBondL1UnlockHeight,
   fetchPoxInfo,
   isBondActiveAtHeight,
+  type BondPhaseName,
 } from '@stacks/bitcoin-staking';
 import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
@@ -27,9 +28,9 @@ export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void
   const now = raw.currentBurnchainBlockHeight;
 
   const ranges = bondPhaseRanges({ bondIndex, poxInfo: pox });
-  const startOf = (name: string): number => ranges.find((r) => r.name === name)!.startBurnHeight;
-  const bondStart = startOf('active');
-  const reLockStart = startOf('re-lock-window');
+  const startOf = (name: BondPhaseName): number => ranges.find((r) => r.name === name)!.startBurnHeight;
+  const bondStart = startOf('locked');
+  const reLockStart = startOf('unlocked');
   const closeHeight = startOf('closed');
   const setupWindowOpen = bondStart - BOND_GAP_CYCLES * pox.rewardCycleLength;
 

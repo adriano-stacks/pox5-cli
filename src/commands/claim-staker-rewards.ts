@@ -1,3 +1,4 @@
+import { fetchEarnedStakerRewards } from '@stacks/bitcoin-staking';
 import {
   PostConditionMode,
   fetchNonce,
@@ -14,7 +15,7 @@ import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveStxAddress, resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
-import { fetchEarnedStakerRewards, fetchSbtcBalance } from '../pox.js';
+import { fetchSbtcBalance } from '../pox.js';
 import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
@@ -50,7 +51,7 @@ export async function claimStakerRewardsCommand(ctx: Ctx, opts: ClaimStakerRewar
   }
 
   const [earned, hasClaim, managerSbtc, nonce] = await Promise.all([
-    fetchEarnedStakerRewards(ctx, { signer: signerManager, rewardCycle: opts.cycle, bondIndex: opts.bond, staker }),
+    fetchEarnedStakerRewards({ signerManager, rewardCycle: opts.cycle, bondIndex: opts.bond, staker, ...ctx.net }),
     managerHasClaimStakerRewards(ctx, smAddress, smName),
     fetchSbtcBalance(ctx, signerManager),
     fetchNonce({ address: sender, ...ctx.net }),

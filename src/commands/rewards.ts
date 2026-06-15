@@ -1,10 +1,10 @@
-import { fetchPoxInfo } from '@stacks/bitcoin-staking';
+import { fetchEarned, fetchPoxInfo } from '@stacks/bitcoin-staking';
 import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveStxAddress } from '../address.js';
 import { explorerLink } from '../explorer.js';
-import { fetchEarnedRewards, resolveFirstPox5Cycle } from '../pox.js';
+import { resolveFirstPox5Cycle } from '../pox.js';
 import { projectPendingRewards } from '../projection.js';
 import { dim, output, printLegend, printNote, printRows, printSection, sats } from '../output.js';
 
@@ -67,7 +67,7 @@ export async function rewardsCommand(ctx: Ctx, signerManagerArg: string | undefi
   const grid = await Promise.all(
     cycles.flatMap((cycle) =>
       bondLegs.map(async (bondIndex): Promise<RewardRow> => {
-        const claimable = await fetchEarnedRewards(ctx, { signer: signerManager, rewardCycle: cycle, bondIndex });
+        const claimable = await fetchEarned({ signerManager, rewardCycle: cycle, bondIndex, ...ctx.net });
         const pending = cycle === projection.cycle ? pendingByLeg.get(legKey(cycle, bondIndex)) ?? 0n : 0n;
         return { cycle, bondIndex, claimable, claimed: scan.claimed.get(legKey(cycle, bondIndex)) ?? 0n, pending };
       }),

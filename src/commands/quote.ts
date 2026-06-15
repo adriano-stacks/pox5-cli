@@ -1,7 +1,6 @@
-import { minUstxForSatsAmount } from '@stacks/bitcoin-staking';
+import { fetchProtocolBond, minUstxForSatsAmount } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
-import { fetchBondConfig } from '../pox.js';
 import { output, printRows, printSection, sats, stx } from '../output.js';
 
 export interface QuoteOpts {
@@ -20,7 +19,7 @@ export async function quoteCommand(ctx: Ctx, opts: QuoteOpts): Promise<void> {
     throw new CliError('provide --sats <n> or --btc <n>');
   }
 
-  const bond = await fetchBondConfig(ctx, opts.bond);
+  const bond = await fetchProtocolBond({ bondIndex: opts.bond, ...ctx.net });
   if (!bond) throw new CliError(`bond ${opts.bond} is not configured on this contract`);
 
   const requiredUstx = minUstxForSatsAmount({

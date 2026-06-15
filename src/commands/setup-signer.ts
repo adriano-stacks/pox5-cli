@@ -1,9 +1,9 @@
 import {
+  computeSignerGrantHash,
   fetchSignerGrantMessageHash,
   fetchSignerInfo,
-  getSignerKeyGrantMessageHash,
-  signSignerKeyGrant,
-  verifySignerKeyGrant,
+  signSignerGrant,
+  verifySignerGrant,
 } from '@stacks/bitcoin-staking';
 import { bytesToHex, hexToBytes } from '@stacks/common';
 import {
@@ -145,10 +145,10 @@ export async function setupSignerCommand(ctx: Ctx, opts: SetupSignerOpts): Promi
     return;
   }
 
-  const signature = signSignerKeyGrant({ ...grantOpts, privateKey: signerPrivateKey });
-  const localHash = bytesToHex(getSignerKeyGrantMessageHash(grantOpts));
+  const signature = signSignerGrant({ ...grantOpts, privateKey: signerPrivateKey });
+  const localHash = bytesToHex(computeSignerGrantHash(grantOpts));
   const hashMatch = localHash === onChainHash.replace(/^0x/, '');
-  const signatureValid = verifySignerKeyGrant({ ...grantOpts, publicKey: signerKey, signature });
+  const signatureValid = verifySignerGrant({ ...grantOpts, publicKey: signerKey, signature });
   if (!signatureValid) throw new CliError('signer-key grant signature failed local verification');
 
   const sbtcContractId = await fetchSbtcContractId(ctx);

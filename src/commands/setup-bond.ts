@@ -1,23 +1,18 @@
 import {
   bondPeriodToBurnHeight,
   bondPeriodToRewardCycle,
-  buildDefaultUnlockScript,
+  buildSetupBond,
+  buildUnlockScript,
   fetchPoxInfo,
 } from '@stacks/bitcoin-staking';
-import { bytesToHex, hexToBytes } from '@stacks/common';
+import { bytesToHex } from '@stacks/common';
 import {
-  bufferCV,
   cvToString,
   deserializeCV,
   fetchNonce,
   getAddressFromPrivateKey,
-  listCV,
-  makeUnsignedContractCall,
-  principalCV,
   privateKeyToPublic,
   publicKeyToHex,
-  tupleCV,
-  uintCV,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
@@ -58,7 +53,7 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
 
   const earlyUnlockDefaulted = opts.earlyUnlockBytesHex === undefined;
   const earlyUnlockBytesHex =
-    opts.earlyUnlockBytesHex ?? bytesToHex(buildDefaultUnlockScript(compressedPublicKey(privateKey)));
+    opts.earlyUnlockBytesHex ?? bytesToHex(buildUnlockScript(compressedPublicKey(privateKey)));
 
   const poxRaw = await fetchPoxInfo(ctx.net);
   const pox = requirePoxWithBondCycle(ctx, poxRaw);
@@ -84,18 +79,13 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
   const totalAllowSats = opts.allowlist.reduce((sum, e) => sum + e.maxSats, 0n);
   const nonce = await fetchNonce({ address: sender, ...ctx.net });
 
-  const tx = await makeUnsignedContractCall({
-    contractAddress: ctx.net.network.bootAddress,
-    contractName: 'pox-5',
-    functionName: 'setup-bond',
-    functionArgs: [
-      uintCV(opts.bondIndex),
-      uintCV(opts.targetRateBps),
-      uintCV(opts.stxValueRatio),
-      uintCV(opts.minUstxRatioBps),
-      bufferCV(hexToBytes(earlyUnlockBytesHex)),
-      listCV(opts.allowlist.map((e) => tupleCV({ staker: principalCV(e.staker), 'max-sats': uintCV(e.maxSats) }))),
-    ],
+  const tx = await buildSetupBond({
+    bondIndex: opts.bondIndex,
+    targetRateBps: opts.targetRateBps,
+    stxValueRatio: opts.stxValueRatio,
+    minUstxRatioBps: opts.minUstxRatioBps,
+    earlyUnlockBytes: earlyUnlockBytesHex,
+    allowlist: opts.allowlist,
     publicKey,
     fee: opts.fee,
     nonce,

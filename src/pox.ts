@@ -1,15 +1,16 @@
-import { firstPox5RewardCycle } from '@stacks/bitcoin-staking';
+import {
+  fetchLastAccountedRewards,
+  fetchLastRewardComputeHeight,
+  fetchNewRewards,
+  fetchReserveBalance,
+  fetchRewards,
+  firstPox5RewardCycle,
+} from '@stacks/bitcoin-staking';
 import type { PoxInfo } from '@stacks/bitcoin-staking';
-import { hexToBytes } from '@stacks/common';
 import {
   ClarityType,
-  bufferCV,
-  cvToString,
   fetchCallReadOnlyFunction,
-  noneCV,
   principalCV,
-  someCV,
-  uintCV,
   type ClarityValue,
 } from '@stacks/transactions';
 import type { Ctx } from './context.js';
@@ -31,64 +32,6 @@ export function callPoxReadOnly(
     senderAddress: boot,
     ...ctx.net,
   });
-}
-
-export interface BondConfig {
-  bondIndex: number;
-  targetRateBps: number;
-  stxValueRatio: bigint;
-  minUstxRatioBps: number;
-  earlyUnlockBytes: string;
-}
-
-export async function fetchBondConfig(ctx: Ctx, bondIndex: number): Promise<BondConfig | undefined> {
-  const result = await callPoxReadOnly(ctx, 'get-protocol-bond', [uintCV(bondIndex)]);
-  if (result.type !== ClarityType.OptionalSome) return undefined;
-  const f = (result.value as { value: Record<string, ClarityValue> }).value;
-  return {
-    bondIndex,
-    targetRateBps: Number((f['target-rate'] as { value: bigint }).value),
-    stxValueRatio: (f['stx-value-ratio'] as { value: bigint }).value,
-    minUstxRatioBps: Number((f['min-ustx-ratio'] as { value: bigint }).value),
-    earlyUnlockBytes: (f['early-unlock-bytes'] as { value: string }).value,
-  };
-}
-
-export interface BondMembership {
-  bondIndex: number;
-  amountUstx: bigint;
-  signer: string;
-  isL1Lock: boolean;
-  amountSats: bigint;
-}
-
-export async function fetchBondMembershipFull(ctx: Ctx, staker: string): Promise<BondMembership | undefined> {
-  const result = await callPoxReadOnly(ctx, 'get-bond-membership', [principalCV(staker)]);
-  if (result.type !== ClarityType.OptionalSome) return undefined;
-  const f = (result.value as { value: Record<string, ClarityValue> }).value;
-  return {
-    bondIndex: Number((f['bond-index'] as { value: bigint }).value),
-    amountUstx: (f['amount-ustx'] as { value: bigint }).value,
-    signer: cvToString(f['signer']!),
-    isL1Lock: f['is-l1-lock']!.type === ClarityType.BoolTrue,
-    amountSats: (f['amount-sats'] as { value: bigint }).value,
-  };
-}
-
-export async function fetchLockupOutputScript(
-  ctx: Ctx,
-  opts: { staker: string; unlockHeight: number; stakerUnlockBytes: Uint8Array; earlyUnlockBytes: string },
-): Promise<string> {
-  const result = await callPoxReadOnly(ctx, 'construct-lockup-output-script', [
-    principalCV(opts.staker),
-    uintCV(opts.unlockHeight),
-    bufferCV(opts.stakerUnlockBytes),
-    bufferCV(hexToBytes(opts.earlyUnlockBytes)),
-  ]);
-  if (result.type !== ClarityType.Buffer) {
-    throw new CliError(`construct-lockup-output-script returned unexpected type ${result.type}`);
-  }
-  return result.value.replace(/^0x/, '');
 }
 
 export async function fetchSbtcContractId(ctx: Ctx): Promise<string | undefined> {
@@ -137,107 +80,15 @@ export interface RewardsState {
   lastComputeHeight: number;
 }
 
-async function readPoxUint(ctx: Ctx, functionName: string): Promise<bigint> {
-  const result = await callPoxReadOnly(ctx, functionName, []);
-  if (result.type !== ClarityType.UInt) {
-    throw new CliError(`${functionName} returned unexpected type ${result.type}`);
-  }
-  return (result as { value: bigint }).value;
-}
-
 export async function fetchRewardsState(ctx: Ctx): Promise<RewardsState> {
   const [reserveBalance, rewardsBalance, newRewards, lastAccounted, lastComputeHeight] = await Promise.all([
-    readPoxUint(ctx, 'get-reserve-balance'),
-    readPoxUint(ctx, 'get-rewards'),
-    readPoxUint(ctx, 'get-new-rewards'),
-    readPoxUint(ctx, 'get-last-accounted-rewards-only'),
-    readPoxUint(ctx, 'get-last-reward-compute-height'),
+    fetchReserveBalance(ctx.net),
+    fetchRewards(ctx.net),
+    fetchNewRewards(ctx.net),
+    fetchLastAccountedRewards(ctx.net),
+    fetchLastRewardComputeHeight(ctx.net),
   ]);
-  return { reserveBalance, rewardsBalance, newRewards, lastAccounted, lastComputeHeight: Number(lastComputeHeight) };
-}
-
-export interface SignerRewardLeg {
-  earned: bigint;
-  unclaimed: bigint;
-  rptSettled: bigint;
-  shares: bigint;
-}
-
-export interface RewardLegArgs {
-  signer: string;
-  rewardCycle: number;
-  bondIndex?: number;
-}
-
-async function readSignerLegUint(ctx: Ctx, functionName: string, opts: RewardLegArgs): Promise<bigint> {
-  const bondArg = opts.bondIndex === undefined ? noneCV() : someCV(uintCV(opts.bondIndex));
-  const result = await callPoxReadOnly(ctx, functionName, [
-    principalCV(opts.signer),
-    uintCV(opts.rewardCycle),
-    bondArg,
-  ]);
-  if (result.type !== ClarityType.UInt) {
-    throw new CliError(`${functionName} returned unexpected type ${result.type}`);
-  }
-  return (result as { value: bigint }).value;
-}
-
-export async function fetchEarnedRewards(ctx: Ctx, opts: RewardLegArgs): Promise<bigint> {
-  return readSignerLegUint(ctx, 'get-earned', opts);
-}
-
-export async function fetchSignerRewardLeg(ctx: Ctx, opts: RewardLegArgs): Promise<SignerRewardLeg> {
-  const [earned, unclaimed, rptSettled, shares] = await Promise.all([
-    readSignerLegUint(ctx, 'get-earned', opts),
-    readSignerLegUint(ctx, 'get-signer-unclaimed-rewards-for-cycle', opts),
-    readSignerLegUint(ctx, 'get-signer-rewards-per-token-settled-for-cycle', opts),
-    readSignerLegUint(ctx, 'get-signer-shares-staked-for-cycle', opts),
-  ]);
-  return { earned, unclaimed, rptSettled, shares };
-}
-
-export async function fetchSignerShares(ctx: Ctx, opts: RewardLegArgs): Promise<bigint> {
-  return readSignerLegUint(ctx, 'get-signer-shares-staked-for-cycle', opts);
-}
-
-export async function fetchEarnedStakerRewards(
-  ctx: Ctx,
-  opts: { signer: string; rewardCycle: number; bondIndex?: number; staker: string },
-): Promise<bigint> {
-  const bondArg = opts.bondIndex === undefined ? noneCV() : someCV(uintCV(opts.bondIndex));
-  const result = await callPoxReadOnly(ctx, 'get-earned-staker-rewards', [
-    principalCV(opts.signer),
-    uintCV(opts.rewardCycle),
-    bondArg,
-    principalCV(opts.staker),
-  ]);
-  if (result.type !== ClarityType.UInt) {
-    throw new CliError(`get-earned-staker-rewards returned unexpected type ${result.type}`);
-  }
-  return (result as { value: bigint }).value;
-}
-
-export async function fetchTotalSharesStaked(
-  ctx: Ctx,
-  opts: { rewardCycle: number; bondIndex?: number },
-): Promise<bigint> {
-  const bondArg = opts.bondIndex === undefined ? noneCV() : someCV(uintCV(opts.bondIndex));
-  const result = await callPoxReadOnly(ctx, 'get-total-shares-staked-for-cycle', [uintCV(opts.rewardCycle), bondArg]);
-  if (result.type !== ClarityType.UInt) {
-    throw new CliError(`get-total-shares-staked-for-cycle returned unexpected type ${result.type}`);
-  }
-  return (result as { value: bigint }).value;
-}
-
-export async function fetchHasAnnouncedL1EarlyExit(
-  ctx: Ctx,
-  opts: { bondIndex: number; staker: string },
-): Promise<boolean> {
-  const result = await callPoxReadOnly(ctx, 'has-announced-l1-early-exit', [
-    uintCV(opts.bondIndex),
-    principalCV(opts.staker),
-  ]);
-  return result.type === ClarityType.BoolTrue;
+  return { reserveBalance, rewardsBalance, newRewards, lastAccounted, lastComputeHeight };
 }
 
 export function resolveFirstPox5Cycle(ctx: Ctx, pox: PoxInfo): number | undefined {

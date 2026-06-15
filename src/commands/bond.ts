@@ -9,6 +9,7 @@ import {
   fetchBondAllowance,
   fetchBondL1UnlockHeight,
   fetchPoxInfo,
+  fetchProtocolBond,
   fetchTotalSbtcStakedForBond,
   type BondPhaseName,
   type PoxInfo,
@@ -17,7 +18,7 @@ import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/tran
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { explorerLink } from '../explorer.js';
-import { fetchBondConfig, resolveFirstPox5Cycle, withFirstPox5Cycle } from '../pox.js';
+import { resolveFirstPox5Cycle, withFirstPox5Cycle } from '../pox.js';
 import { bitcoinBlocks, bps, dim, output, percent, printNote, printRows, printSection, sats, type Row } from '../output.js';
 
 const BOND_END_OFFSET_PERIODS = 6;
@@ -116,7 +117,7 @@ function phaseAt(burnHeight: number, pox: PoxInfo, bondIndex: number): BondPhase
 export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): Promise<void> {
   const [pox, bond, filledSbtc] = await Promise.all([
     fetchPoxInfo(ctx.net),
-    fetchBondConfig(ctx, bondIndex),
+    fetchProtocolBond({ bondIndex, ...ctx.net }),
     fetchTotalSbtcStakedForBond({ bondIndex, ...ctx.net }),
   ]);
 

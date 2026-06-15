@@ -1,11 +1,16 @@
 import {
   buildAnnounceL1EarlyExit,
-  buildDefaultUnlockScript,
+  buildLockOutputScript,
+  buildLockScript,
+  buildUnlockScript,
   computeBondUnlockHeight,
+  computeRegisterPreimage,
   fetchBondMembership,
+  fetchConstructLockupOutputScript,
+  fetchHasAnnouncedL1EarlyExit,
   fetchPoxInfo,
+  fetchProtocolBond,
 } from '@stacks/bitcoin-staking';
-import { computeP2wshOutputScript } from '@stacks/bitcoin-staking';
 import { bytesToHex } from '@stacks/common';
 import * as btc from '@scure/btc-signer';
 import {
@@ -21,21 +26,14 @@ import {
   broadcastBtcTx,
   btcNetwork,
   buildEarlyExitSpend,
-  buildLockupScript,
   fetchBtcTxHex,
   parseSingleKeyEarlyUnlock,
   parseTxOutput,
   resolveBtcKey,
-  stakerCommitmentPreimage,
   type BtcNetworkName,
 } from '../btc.js';
 import { bitcoinAddressLink, bitcoinTxLink, explorerLink, explorerTxLink } from '../explorer.js';
-import {
-  fetchBondConfig,
-  fetchHasAnnouncedL1EarlyExit,
-  fetchLockupOutputScript,
-  requirePoxWithBondCycle,
-} from '../pox.js';
+import { requirePoxWithBondCycle } from '../pox.js';
 import { signAndConfirm, txStatusLabel, type TxOutcome } from '../tx.js';
 import { output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
@@ -68,7 +66,7 @@ export async function earlyExitCommand(ctx: Ctx, opts: EarlyExitOpts): Promise<v
   const publicKey = publicKeyToHex(privateKeyToPublic(privateKey));
 
   const [bond, poxRaw, membership] = await Promise.all([
-    fetchBondConfig(ctx, opts.bond),
+    fetchProtocolBond({ bondIndex: opts.bond, ...ctx.net }),
     fetchPoxInfo(ctx.net),
     fetchBondMembership({ address: staker, ...ctx.net }),
   ]);
@@ -101,20 +99,28 @@ export async function earlyExitCommand(ctx: Ctx, opts: EarlyExitOpts): Promise<v
     }
 
     const unlockHeight = computeBondUnlockHeight({ bondIndex: opts.bond, poxInfo: pox });
-    const stakerUnlockBytes = buildDefaultUnlockScript(key.publicKey);
-    const witnessScript = buildLockupScript({
+    const stakerUnlockBytes = buildUnlockScript(key.publicKey);
+    const witnessScript = buildLockScript({
       stxAddress: staker,
       unlockHeight,
-      stakerUnlockBytes,
+      unlockBytes: stakerUnlockBytes,
       earlyUnlockBytes: bond.earlyUnlockBytes,
     });
-    const lockOutputScript = computeP2wshOutputScript(witnessScript);
-    const onChain = await fetchLockupOutputScript(ctx, {
-      staker,
+    const lockOutputScript = buildLockOutputScript({
+      stxAddress: staker,
       unlockHeight,
-      stakerUnlockBytes,
+      unlockBytes: stakerUnlockBytes,
       earlyUnlockBytes: bond.earlyUnlockBytes,
     });
+    const onChain = bytesToHex(
+      await fetchConstructLockupOutputScript({
+        stxAddress: staker,
+        unlockHeight,
+        unlockBytes: stakerUnlockBytes,
+        earlyUnlockBytes: bond.earlyUnlockBytes,
+        ...ctx.net,
+      }),
+    );
     if (onChain !== bytesToHex(lockOutputScript)) {
       throw new CliError(
         "locally derived lockup script does not match the contract's construct-lockup-output-script — " +
@@ -141,7 +147,7 @@ export async function earlyExitCommand(ctx: Ctx, opts: EarlyExitOpts): Promise<v
       lockAmount: lockOut.amount,
       lockScriptPubKey: lockOut.script,
       witnessScript,
-      preimage: stakerCommitmentPreimage(staker),
+      preimage: computeRegisterPreimage(staker),
       needsFiller: single.needsFiller,
       privateKey: key.privateKey,
       to,
@@ -156,7 +162,7 @@ export async function earlyExitCommand(ctx: Ctx, opts: EarlyExitOpts): Promise<v
   if (opts.announce) {
     const [nonce, alreadyAnnounced] = await Promise.all([
       fetchNonce({ address: staker, ...ctx.net }),
-      fetchHasAnnouncedL1EarlyExit(ctx, { bondIndex: opts.bond, staker }),
+      fetchHasAnnouncedL1EarlyExit({ bondIndex: opts.bond, staker, ...ctx.net }),
     ]);
     const blockers: string[] = [];
     if (membership === undefined) {

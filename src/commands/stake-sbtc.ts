@@ -1,31 +1,27 @@
 import {
   bondPeriodToBurnHeight,
   bondPeriodToRewardCycle,
+  buildRegisterForBond,
   fetchBondAllowance,
   fetchBondMembership,
   fetchPoxInfo,
+  fetchProtocolBond,
   fetchSignerInfo,
   isInPreparePhase,
   minUstxForSatsAmount,
 } from '@stacks/bitcoin-staking';
 import {
   Pc,
-  PostConditionMode,
   fetchNonce,
   getAddressFromPrivateKey,
-  makeUnsignedContractCall,
-  noneCV,
-  principalCV,
   privateKeyToPublic,
   publicKeyToHex,
-  responseErrorCV,
-  uintCV,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
-import { fetchBondConfig, fetchSbtcBalance, fetchSbtcContractId, requirePoxWithBondCycle } from '../pox.js';
+import { fetchSbtcBalance, fetchSbtcContractId, requirePoxWithBondCycle } from '../pox.js';
 import { signAndConfirm, txStatusLabel } from '../tx.js';
 import {
   bitcoinBlocks,
@@ -56,7 +52,10 @@ export async function stakeSbtcCommand(ctx: Ctx, opts: StakeSbtcOpts): Promise<v
   const publicKey = publicKeyToHex(privateKeyToPublic(privateKey));
   const signerManager = opts.signerManager ?? `${sender}.signer-manager`;
 
-  const [bond, poxRaw] = await Promise.all([fetchBondConfig(ctx, opts.bond), fetchPoxInfo(ctx.net)]);
+  const [bond, poxRaw] = await Promise.all([
+    fetchProtocolBond({ bondIndex: opts.bond, ...ctx.net }),
+    fetchPoxInfo(ctx.net),
+  ]);
   if (!bond) throw new CliError(`bond ${opts.bond} is not configured on this contract`);
   const pox = requirePoxWithBondCycle(ctx, poxRaw);
 
@@ -99,23 +98,17 @@ export async function stakeSbtcCommand(ctx: Ctx, opts: StakeSbtcOpts): Promise<v
       .willSendLte(opts.amountSats)
       .ft(sbtcContractId as `${string}.${string}`, 'sbtc-token'),
   ];
-  const tx = await makeUnsignedContractCall({
-    contractAddress: ctx.net.network.bootAddress,
-    contractName: 'pox-5',
-    functionName: 'register-for-bond',
-    functionArgs: [
-      uintCV(opts.bond),
-      principalCV(signerManager),
-      uintCV(amountUstx),
-      responseErrorCV(uintCV(opts.amountSats)),
-      noneCV(),
-    ],
+  const tx = await buildRegisterForBond({
+    bondIndex: opts.bond,
+    signerManager,
+    amountUstx,
+    lockup: { kind: 'sbtc', sbtcSats: opts.amountSats },
     publicKey,
     fee: opts.fee,
     nonce,
     network: ctx.net.network,
     postConditions,
-    postConditionMode: PostConditionMode.Deny,
+    postConditionMode: 'deny',
   });
 
   const baseRows: Row[] = [

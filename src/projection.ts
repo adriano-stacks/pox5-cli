@@ -3,25 +3,22 @@ import {
   burnHeightToRewardCycle,
   currentDistributionCycle,
   distributionCycleToBurnHeight,
+  fetchProtocolBond,
+  fetchSignerSharesStakedForCycle,
+  fetchTotalSharesStakedForCycle,
   isBondActiveAtHeight,
+  type Bond,
   type PoxInfo,
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from './context.js';
-import {
-  fetchBondConfig,
-  fetchRewardsState,
-  fetchSignerShares,
-  fetchTotalSharesStaked,
-  requirePoxWithBondCycle,
-  type BondConfig,
-} from './pox.js';
+import { fetchRewardsState, requirePoxWithBondCycle } from './pox.js';
 
 const PRECISION = 1000000000000000000n;
 const RESERVE_RATIO_BPS = 1500n;
 
 export interface ActiveBond {
   index: number;
-  config: BondConfig;
+  config: Bond;
 }
 
 export async function discoverActiveBonds(ctx: Ctx, pox: PoxInfo, calcHeight: number): Promise<ActiveBond[]> {
@@ -35,7 +32,7 @@ export async function discoverActiveBonds(ctx: Ctx, pox: PoxInfo, calcHeight: nu
 
   const checked = await Promise.all(
     candidates.map(async (index): Promise<ActiveBond | undefined> => {
-      const config = await fetchBondConfig(ctx, index);
+      const config = await fetchProtocolBond({ bondIndex: index, ...ctx.net });
       if (config === undefined) return undefined;
       if (!isBondActiveAtHeight({ bondIndex: index, burnHeight: calcHeight, poxInfo: p })) return undefined;
       return { index, config };
@@ -85,14 +82,14 @@ export async function projectPendingRewards(ctx: Ctx, pox: PoxInfo, signer: stri
     Promise.all(
       active.map(async (bond) => {
         const [totalSats, signerShares] = await Promise.all([
-          fetchTotalSharesStaked(ctx, { rewardCycle: cycle, bondIndex: bond.index }),
-          fetchSignerShares(ctx, { signer, rewardCycle: cycle, bondIndex: bond.index }),
+          fetchTotalSharesStakedForCycle({ rewardCycle: cycle, bondIndex: bond.index, ...ctx.net }),
+          fetchSignerSharesStakedForCycle({ signerManager: signer, rewardCycle: cycle, bondIndex: bond.index, ...ctx.net }),
         ]);
         return { bond, totalSats, signerShares };
       }),
     ),
-    fetchTotalSharesStaked(ctx, { rewardCycle: cycle }),
-    fetchSignerShares(ctx, { signer, rewardCycle: cycle }),
+    fetchTotalSharesStakedForCycle({ rewardCycle: cycle, ...ctx.net }),
+    fetchSignerSharesStakedForCycle({ signerManager: signer, rewardCycle: cycle, ...ctx.net }),
   ]);
 
   let available = state.newRewards;

@@ -1,10 +1,13 @@
 import {
   bondPeriodToBurnHeight,
-  buildDefaultUnlockScript,
+  buildLockOutputScript,
+  buildLockScript,
+  buildUnlockScript,
   computeBondUnlockHeight,
-  computeP2wshOutputScript,
   fetchBondAllowance,
+  fetchConstructLockupOutputScript,
   fetchPoxInfo,
+  fetchProtocolBond,
   minUstxForSatsAmount,
 } from '@stacks/bitcoin-staking';
 import { bytesToHex, hexToBytes } from '@stacks/common';
@@ -15,14 +18,13 @@ import { resolveStxAddress } from '../address.js';
 import {
   broadcastBtcTx,
   btcNetwork,
-  buildLockupScript,
   fetchBtcTxHex,
   parseTxOutput,
   resolveBtcKey,
   type BtcNetworkName,
 } from '../btc.js';
 import { bitcoinAddressLink, bitcoinTxLink, explorerLink } from '../explorer.js';
-import { fetchBondConfig, fetchLockupOutputScript, requirePoxWithBondCycle } from '../pox.js';
+import { requirePoxWithBondCycle } from '../pox.js';
 import { bitcoinBlocks, output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
 const DUST_SATS = 546n;
@@ -59,7 +61,10 @@ export async function lockBtcCommand(ctx: Ctx, opts: LockBtcOpts): Promise<void>
     );
   }
 
-  const [bond, poxRaw] = await Promise.all([fetchBondConfig(ctx, opts.bond), fetchPoxInfo(ctx.net)]);
+  const [bond, poxRaw] = await Promise.all([
+    fetchProtocolBond({ bondIndex: opts.bond, ...ctx.net }),
+    fetchPoxInfo(ctx.net),
+  ]);
   if (!bond) throw new CliError(`bond ${opts.bond} is not configured on this contract`);
   const pox = requirePoxWithBondCycle(ctx, poxRaw);
 
@@ -81,20 +86,28 @@ export async function lockBtcCommand(ctx: Ctx, opts: LockBtcOpts): Promise<void>
   }
 
   const unlockHeight = computeBondUnlockHeight({ bondIndex: opts.bond, poxInfo: pox });
-  const unlockBytes = buildDefaultUnlockScript(key.publicKey);
-  const lockingScript = buildLockupScript({
+  const unlockBytes = buildUnlockScript(key.publicKey);
+  const lockingScript = buildLockScript({
     stxAddress,
     unlockHeight,
-    stakerUnlockBytes: unlockBytes,
+    unlockBytes,
     earlyUnlockBytes: bond.earlyUnlockBytes,
   });
-  const lockOutputScript = computeP2wshOutputScript(lockingScript);
-  const onChainOutputScript = await fetchLockupOutputScript(ctx, {
-    staker: stxAddress,
+  const lockOutputScript = buildLockOutputScript({
+    stxAddress,
     unlockHeight,
-    stakerUnlockBytes: unlockBytes,
+    unlockBytes,
     earlyUnlockBytes: bond.earlyUnlockBytes,
   });
+  const onChainOutputScript = bytesToHex(
+    await fetchConstructLockupOutputScript({
+      stxAddress,
+      unlockHeight,
+      unlockBytes,
+      earlyUnlockBytes: bond.earlyUnlockBytes,
+      ...ctx.net,
+    }),
+  );
   if (onChainOutputScript !== bytesToHex(lockOutputScript)) {
     throw new CliError(
       'locally derived lockup script does not match the contract\'s construct-lockup-output-script — ' +

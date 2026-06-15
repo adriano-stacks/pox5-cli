@@ -1,10 +1,11 @@
 import {
   fetchTotalSbtcStaked,
   fetchTotalSbtcStakedForBond,
+  fetchTotalSharesStakedForCycle,
   fetchTotalUstxStacked,
 } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
-import { fetchRewardsState, fetchTotalSharesStaked } from '../pox.js';
+import { fetchRewardsState } from '../pox.js';
 import { output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
 export interface TotalsOpts {
@@ -26,7 +27,7 @@ export async function totalsCommand(ctx: Ctx, opts: TotalsOpts): Promise<void> {
       ? undefined
       : Promise.all([
           fetchTotalUstxStacked({ rewardCycle: opts.cycle, ...ctx.net }),
-          fetchTotalSharesStaked(ctx, { rewardCycle: opts.cycle }),
+          fetchTotalSharesStakedForCycle({ rewardCycle: opts.cycle, ...ctx.net }),
         ]).then(([ustx, shares]) => ({ index: opts.cycle!, ustx, shares })),
   ]);
 

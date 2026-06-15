@@ -14,13 +14,10 @@
   "files": [
     "dist/pox5.cjs",
     "src",
-    "scripts/fix-esm-marker.mjs",
     ".env.example",
     "README.md"
   ],
   "scripts": {
-    "postinstall": "node scripts/fix-esm-marker.mjs",
-    "fix:esm": "node scripts/fix-esm-marker.mjs",
     "pox5": "tsx src/index.ts",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
@@ -30,10 +27,10 @@
   },
   "dependencies": {
     "@scure/btc-signer": "^2.0.1",
-    "@stacks/bitcoin-staking": "7.4.1-pr.1854.3",
-    "@stacks/common": "7.4.1-pr.1854.3",
-    "@stacks/network": "7.4.1-pr.1854.3",
-    "@stacks/transactions": "7.4.1-pr.1854.3",
+    "@stacks/bitcoin-staking": "7.4.1-pr.1854.4",
+    "@stacks/common": "7.4.1-pr.1854.4",
+    "@stacks/network": "7.4.1-pr.1854.4",
+    "@stacks/transactions": "7.4.1-pr.1854.4",
     "commander": "^12.1.0",
     "dotenv": "^16.4.7"
   },
