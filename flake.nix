@@ -21,41 +21,32 @@
       packages = forAllSystems (
         pkgs:
         let
-          pnpm = pnpmFor pkgs;
+          importPnpmLock = import ./nix/import-pnpm-lock.nix {
+            inherit pkgs;
+            inherit (pkgs) lib;
+          };
+
+          # node_modules derived entirely from pnpm-lock.yaml: each tarball is
+          # fetched against the lockfile's own integrity hash, so there is no
+          # extra Nix-side hash to refresh when dependencies change.
+          nodeModules = importPnpmLock { lockfile = ./pnpm-lock.yaml; };
         in
         rec {
           default = pox5-cli;
 
-          pox5-cli = pkgs.stdenv.mkDerivation (finalAttrs: {
+          pox5-cli = pkgs.stdenv.mkDerivation {
             pname = "pox5-cli";
             version = "0.1.0";
             src = ./.;
 
-            pnpmDeps = pkgs.fetchPnpmDeps {
-              inherit (finalAttrs) pname version;
-              inherit pnpm;
-              fetcherVersion = 3;
-              src = pkgs.lib.fileset.toSource {
-                root = ./.;
-                fileset = pkgs.lib.fileset.unions [
-                  ./package.json
-                  ./pnpm-lock.yaml
-                  ./pnpm-workspace.yaml
-                  ./.npmrc
-                ];
-              };
-              hash = "sha256-dqplRgQO/CSMeO/BvTTNko9cGhmVP6nwwb0iozeoTRM=";
-            };
-
             nativeBuildInputs = [
               pkgs.nodejs_latest
-              pnpm
-              pkgs.pnpmConfigHook
               pkgs.makeWrapper
             ];
 
             buildPhase = ''
               runHook preBuild
+              ln -s ${nodeModules} node_modules
               node scripts/build.mjs
               runHook postBuild
             '';
@@ -74,9 +65,15 @@
               mainProgram = "pox5";
               platforms = systems;
             };
-          });
+          };
         }
       );
+
+      # `nix flake check` builds the package, so lockfile/build breakage is
+      # caught by CI.
+      checks = forAllSystems (pkgs: {
+        build = self.packages.${pkgs.stdenv.hostPlatform.system}.pox5-cli;
+      });
 
       apps = forAllSystems (pkgs: rec {
         default = pox5;

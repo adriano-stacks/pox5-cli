@@ -29,6 +29,13 @@ pnpm pox5 info          # = tsx src/index.ts info
 pnpm pox5 --json info   # flags pass straight through — no `--` separator
 ```
 
+Or run the built CLI directly with Nix, no checkout setup needed:
+
+```bash
+nix run . -- info
+nix run github:adriano-stacks/pox5-cli -- info   # straight from the repo
+```
+
 ### Commands
 
 Use `pox5 --help` for the command list, and `pox5 <command> --help` for any
@@ -59,3 +66,8 @@ Key values for `private-1`:
 
 Run `pnpm install` once first: both `pox5` and `pnpm pox5` execute the TypeScript
 source, which needs `node_modules`.
+
+The Nix build derives every dependency fetch from `pnpm-lock.yaml` itself
+(see `nix/import-pnpm-lock.nix`), so lockfile changes are picked up
+automatically — there is no Nix-side hash to refresh. CI builds the flake and
+smoke-tests the CLI on every push.
