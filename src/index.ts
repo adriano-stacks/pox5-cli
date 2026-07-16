@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { Command } from 'commander';
 import { buildContext, type GlobalOpts } from './context.js';
 import { CliError } from './errors.js';
+import { installFetchRetry } from './fetch-retry.js';
 import { dim } from './output.js';
 import { infoCommand } from './commands/info.js';
 import { positionCommand } from './commands/position.js';
@@ -33,6 +34,8 @@ process.stdout.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') process.exit(0);
   throw err;
 });
+
+installFetchRetry();
 
 const intArg = (name: string) => (v: string): number => {
   const n = Number(v);

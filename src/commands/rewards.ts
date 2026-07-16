@@ -10,6 +10,7 @@ import { dim, output, printLegend, printNote, printRows, printSection, sats } fr
 
 const EVENT_PAGE_SIZE = 50;
 const EVENT_MAX_PAGES = 100;
+const READ_CONCURRENCY = 10;
 
 export interface RewardsOpts {
   cycle?: number;
@@ -64,15 +65,12 @@ export async function rewardsCommand(ctx: Ctx, signerManagerArg: string | undefi
   const bondLegs: (number | undefined)[] =
     opts.bond !== undefined ? [opts.bond] : [undefined, ...[...scan.bondIndices].sort((a, b) => a - b)];
 
-  const grid = await Promise.all(
-    cycles.flatMap((cycle) =>
-      bondLegs.map(async (bondIndex): Promise<RewardRow> => {
-        const claimable = await fetchEarned({ signerManager, rewardCycle: cycle, bondIndex, ...ctx.net });
-        const pending = cycle === projection.cycle ? pendingByLeg.get(legKey(cycle, bondIndex)) ?? 0n : 0n;
-        return { cycle, bondIndex, claimable, claimed: scan.claimed.get(legKey(cycle, bondIndex)) ?? 0n, pending };
-      }),
-    ),
-  );
+  const cells = cycles.flatMap((cycle) => bondLegs.map((bondIndex) => ({ cycle, bondIndex })));
+  const grid = await mapLimit(cells, READ_CONCURRENCY, async ({ cycle, bondIndex }): Promise<RewardRow> => {
+    const claimable = await fetchEarned({ signerManager, rewardCycle: cycle, bondIndex, ...ctx.net });
+    const pending = cycle === projection.cycle ? pendingByLeg.get(legKey(cycle, bondIndex)) ?? 0n : 0n;
+    return { cycle, bondIndex, claimable, claimed: scan.claimed.get(legKey(cycle, bondIndex)) ?? 0n, pending };
+  });
 
   const rows = grid
     .filter((r) => r.claimable > 0n || r.claimed > 0n || r.pending > 0n)
@@ -145,6 +143,20 @@ function legOrder(bondIndex?: number): number {
   return bondIndex === undefined ? -1 : bondIndex;
 }
 
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await fn(items[i]!);
+      }
+    }),
+  );
+  return results;
+}
+
 function resolveCycles(
   opts: RewardsOpts,
   ctx: { currentCycle: number; firstPox5?: number; seen: Set<number> },
@@ -211,7 +223,10 @@ function accumulate(
   const f = (cv as { value: Record<string, ClarityValue> }).value;
   const topic = f['topic'] ? cvToValue(f['topic']) : undefined;
 
-  if (topic === 'setup-bond') {
+  // setup-bond events are protocol-global (no signer-manager field), so they can't
+  // tell us which bonds this signer is on — register-for-bond events can.
+  if (topic === 'register-for-bond') {
+    if (!f['signer'] || cvToValue(f['signer']) !== signerManager) return;
     if (f['bond-index']) acc.bondIndices.add(Number((f['bond-index'] as { value: bigint }).value));
     return;
   }
