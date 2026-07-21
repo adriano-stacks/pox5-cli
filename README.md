@@ -45,18 +45,18 @@ output) and the connection overrides that mirror the
 
 ## Configuration
 
-Defaults target the `private-1.hiro.so` testnet and need no config. To
+Defaults target the `testnet-pox5.hiro.so` testnet and need no config. To
 override, copy `.env.example` to `.env`. CLI flags override env which overrides
 built-in defaults.
 
-Key values for `private-1`:
+Key values for `testnet-pox5`:
 
-- Stacks RPC: `https://api.private-1.hiro.so` (the SDK hits `/v2/*` at the host
-  root)
-- Extended API (faucets): `https://api.private-1.hiro.so/extended`
-- Bitcoin (Esplora): `https://mempool.bitcoin.private-1.hiro.so/api`
+- Stacks RPC: `https://api.testnet-pox5.hiro.so` (the SDK hits `/v2/*` at the
+  host root)
+- Extended API (faucets): `https://api.testnet-pox5.hiro.so/extended`
+- Bitcoin (Esplora): `https://mempool.testnet-pox5.hiro.so/api`
 - pox-5 contract: `ST000000000000000000002AMW42H.pox-5`
-- chain id: `256`
+- chain id: `2147483653` (`0x80000005`)
 
 ## Development
 

@@ -7,12 +7,12 @@ import {
 import { CliError } from './errors.js';
 
 const DEFAULTS = {
-  stacksApiUrl: 'https://api.private-1.hiro.so',
-  extendedApiUrl: 'https://api.private-1.hiro.so/extended',
-  bitcoinApiUrl: 'https://mempool.bitcoin.private-1.hiro.so/api',
+  stacksApiUrl: 'https://api.testnet-pox5.hiro.so',
+  extendedApiUrl: 'https://api.testnet-pox5.hiro.so/extended',
+  bitcoinApiUrl: 'https://mempool.testnet-pox5.hiro.so/api',
   explorerUrl: 'https://explorer.hiro.so',
   explorerChain: 'mainnet',
-  chainId: 256,
+  chainId: 0x80000005,
   bootAddress: 'ST000000000000000000002AMW42H',
   networkBase: 'testnet' as const,
 };
