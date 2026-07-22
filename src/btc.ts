@@ -1,6 +1,6 @@
 import * as btc from '@scure/btc-signer';
-import { signECDSA } from '@scure/btc-signer/utils.js';
 import { bytesToHex, hexToBytes } from '@stacks/common';
+import type { StacksNetworkName } from '@stacks/network';
 import { privateKeyToPublic, publicKeyToHex } from '@stacks/transactions';
 import type { Config } from './config.js';
 import { CliError } from './errors.js';
@@ -9,20 +9,22 @@ export type BtcNetworkName = 'regtest' | 'testnet' | 'signet' | 'mainnet';
 
 export const BTC_NETWORK_NAMES: BtcNetworkName[] = ['regtest', 'testnet', 'signet', 'mainnet'];
 
-const REGTEST = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4, wif: 0xef };
+export function stacksNetworkForBtc(name: BtcNetworkName): StacksNetworkName {
+  if (!BTC_NETWORK_NAMES.includes(name)) {
+    throw new CliError(`unknown btc network "${name}" (expected ${BTC_NETWORK_NAMES.join(' | ')})`);
+  }
+  if (name === 'mainnet') return 'mainnet';
+  if (name === 'regtest') return 'devnet';
+  return 'testnet';
+}
+
+const REGTEST = { ...btc.TEST_NETWORK, bech32: 'bcrt' };
 
 export function btcNetwork(name: BtcNetworkName): typeof btc.NETWORK {
-  switch (name) {
-    case 'mainnet':
-      return btc.NETWORK;
-    case 'testnet':
-    case 'signet':
-      return btc.TEST_NETWORK;
-    case 'regtest':
-      return REGTEST;
-    default:
-      throw new CliError(`unknown btc network "${name}" (expected ${BTC_NETWORK_NAMES.join(' | ')})`);
-  }
+  const network = stacksNetworkForBtc(name);
+  if (network === 'mainnet') return btc.NETWORK;
+  if (network === 'devnet') return REGTEST;
+  return btc.TEST_NETWORK;
 }
 
 export interface BtcKey {
@@ -121,61 +123,6 @@ export async function broadcastBtcTx(config: Config, txHex: string): Promise<str
   const text = await res.text();
   if (!res.ok) throw new CliError(`Bitcoin broadcast rejected: ${text.slice(0, 300)}`);
   return text.trim();
-}
-
-export interface SingleKeyEarlyUnlock {
-  publicKey: string;
-  needsFiller: boolean;
-}
-
-export function parseSingleKeyEarlyUnlock(earlyUnlockBytesHex: string): SingleKeyEarlyUnlock | undefined {
-  const m = /^21([0-9a-f]{66})(ac|ad)$/.exec(earlyUnlockBytesHex.toLowerCase());
-  if (!m) return undefined;
-  return { publicKey: m[1]!, needsFiller: m[2] === 'ad' };
-}
-
-export interface EarlyExitSpend {
-  txid: string;
-  txHex: string;
-  outputSats: bigint;
-}
-
-export function buildEarlyExitSpend(opts: {
-  lockTxid: string;
-  lockVout: number;
-  lockAmount: bigint;
-  lockScriptPubKey: Uint8Array;
-  witnessScript: Uint8Array;
-  preimage: Uint8Array;
-  needsFiller: boolean;
-  privateKey: Uint8Array;
-  to: string;
-  feeSats: bigint;
-  network: typeof btc.NETWORK;
-}): EarlyExitSpend {
-  const outputSats = opts.lockAmount - opts.feeSats;
-  const tx = new btc.Transaction({ allowUnknownInputs: true });
-  tx.addInput({
-    txid: opts.lockTxid,
-    index: opts.lockVout,
-    witnessUtxo: { script: opts.lockScriptPubKey, amount: opts.lockAmount },
-  });
-  tx.addOutputAddress(opts.to, outputSats, opts.network);
-
-  const sighash = tx.preimageWitnessV0(0, opts.witnessScript, btc.SigHash.ALL, opts.lockAmount);
-  const sig = new Uint8Array([...signECDSA(sighash, opts.privateKey), btc.SigHash.ALL]);
-
-  // OP_ELSE branch witness, bottom->top (last item is the witnessScript). The shared OP_VERIFY
-  // after OP_ENDIF needs a truthy item: a CHECKSIGVERIFY (ad) early-unlock leaves nothing, so a
-  // 0x01 filler is inserted below the early-unlock signature; a CHECKSIG (ac) leaves its own
-  // boolean and needs no filler. Both signature slots are the same key over the same sighash.
-  const empty = new Uint8Array(0);
-  const witness = opts.needsFiller
-    ? [sig, Uint8Array.of(0x01), sig, opts.preimage, empty, opts.witnessScript]
-    : [sig, sig, opts.preimage, empty, opts.witnessScript];
-  tx.updateInput(0, { finalScriptWitness: witness }, true);
-
-  return { txid: tx.id, txHex: tx.hex, outputSats };
 }
 
 export interface ParsedOutput {

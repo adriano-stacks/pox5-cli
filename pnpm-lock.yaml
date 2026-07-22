@@ -12,17 +12,17 @@ importers:
         specifier: ^2.0.1
         version: 2.2.0
       '@stacks/bitcoin-staking':
-        specifier: 7.4.1-pr.1854.4
-        version: 7.4.1-pr.1854.4
+        specifier: 7.5.1-pr.1854.0
+        version: 7.5.1-pr.1854.0
       '@stacks/common':
-        specifier: 7.4.1-pr.1854.4
-        version: 7.4.1-pr.1854.4
+        specifier: 7.5.1-pr.1854.0
+        version: 7.5.1-pr.1854.0
       '@stacks/network':
-        specifier: 7.4.1-pr.1854.4
-        version: 7.4.1-pr.1854.4
+        specifier: 7.5.1-pr.1854.0
+        version: 7.5.1-pr.1854.0
       '@stacks/transactions':
-        specifier: 7.4.1-pr.1854.4
-        version: 7.4.1-pr.1854.4
+        specifier: 7.5.1-pr.1854.0
+        version: 7.5.1-pr.1854.0
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -234,20 +234,20 @@ packages:
   '@scure/btc-signer@2.2.0':
     resolution: {integrity: sha512-ZXZ08sZqSZKEcOuEQnxTF66ouHtl6+UA6U/QfQM06K9WiOlEkXF4LviZCaSgkdiFh9cyMt9+xdup7JtEv3p0fw==}
 
-  '@stacks/bitcoin-staking@7.4.1-pr.1854.4':
-    resolution: {integrity: sha512-2kmKGh6kWp6xgiyJi2udKwk58knv+QipSZb/UEhZwhPgKEdAenFigm8l76u6fMM4+DOAvG071ddvnEP8OogeIw==}
+  '@stacks/bitcoin-staking@7.5.1-pr.1854.0':
+    resolution: {integrity: sha512-8TdMOmy4Mb60pqkRyxOKxnPKriFRrJH1z0/qLio6j2lRKE5CePJwz9sHnEuzqzCppEmuEdguarp+Nkdk87cDLA==}
 
-  '@stacks/common@7.4.1-pr.1854.4':
-    resolution: {integrity: sha512-k0fS0WNfMdQgBOSvhAUiZ1OeXK0WYAhSHk8JAWsWSvd8LIkKcnBkSVnpTXqTJRDiyrYFjWrfxHRXNE/bPP2HQA==}
+  '@stacks/common@7.5.1-pr.1854.0':
+    resolution: {integrity: sha512-3/Jrk4e2LW2k4DrrpZDqf2AksYkPWVfuDNVE8WngqCNMN0P9mDTvhw289DVS42gQ0Vq4o9ghBlXs5wZmJENMCQ==}
 
-  '@stacks/encryption@7.4.1-pr.1854.4':
-    resolution: {integrity: sha512-Z6sBfSiqN+pbXs8TjvXpiivnNZ130wNDGLqvY/6lCNLx2DMn5yRN1MQXNRVTPl8K35gkv5MS8lqIhHOqaK8Xpg==}
+  '@stacks/encryption@7.5.1-pr.1854.0':
+    resolution: {integrity: sha512-2JfeR7XdGyCc9AfMppi8VVLtIiyAFAypav0fAa6oC1jO1F+wI0EQELl5z2kokTID/6idIko48Mg+WDRG8NkwjQ==}
 
-  '@stacks/network@7.4.1-pr.1854.4':
-    resolution: {integrity: sha512-6JMEUvDLzYl1xXOpA0V5vmALiijOALcbG5eENggUdLZuYbcpcy3B+2wqQIjlBuUU8PxV2n+49k71sWg1EpeTVQ==}
+  '@stacks/network@7.5.1-pr.1854.0':
+    resolution: {integrity: sha512-8G/k0RrCR90850cLACJP94f8io+KbMoQ4kvRCaIVrZ9jgDnBfhvTlJBCmGru5a28ZBi1ciE1USpB9ZodotkzjA==}
 
-  '@stacks/transactions@7.4.1-pr.1854.4':
-    resolution: {integrity: sha512-4i/SxGQ+ll5p/YGHnrhH+GZjUZiqPj6cFPuyeFNVdjRgOfUxORO3XfNxYl82xdREXSGUWNhNuFPJhpLhS7ypBA==}
+  '@stacks/transactions@7.5.1-pr.1854.0':
+    resolution: {integrity: sha512-g0tZ19drmGyz+P9OnigaHp95pJdvbmqnbHTEUar6a5Xvcd7U8eI/+ItOuGEamXkn4vhZ9nZhPkBlHi8lS7/yCQ==}
 
   '@types/node@22.19.20':
     resolution: {integrity: sha512-6tELRwSDYWW9EdZhbeZmYGZ1/7Djkt+Ah3/ScEYT9cDord7UJzasR/4D3VONg9tQI5CDp+/CZC1AXj2pCFOvpw==}
@@ -444,44 +444,44 @@ snapshots:
       '@scure/base': 2.2.0
       micro-packed: 0.9.0
 
-  '@stacks/bitcoin-staking@7.4.1-pr.1854.4':
+  '@stacks/bitcoin-staking@7.5.1-pr.1854.0':
     dependencies:
       '@noble/hashes': 2.0.1
       '@scure/base': 2.0.0
       '@scure/btc-signer': 2.2.0
-      '@stacks/common': 7.4.1-pr.1854.4
-      '@stacks/encryption': 7.4.1-pr.1854.4
-      '@stacks/network': 7.4.1-pr.1854.4
-      '@stacks/transactions': 7.4.1-pr.1854.4
+      '@stacks/common': 7.5.1-pr.1854.0
+      '@stacks/encryption': 7.5.1-pr.1854.0
+      '@stacks/network': 7.5.1-pr.1854.0
+      '@stacks/transactions': 7.5.1-pr.1854.0
     transitivePeerDependencies:
       - encoding
 
-  '@stacks/common@7.4.1-pr.1854.4': {}
+  '@stacks/common@7.5.1-pr.1854.0': {}
 
-  '@stacks/encryption@7.4.1-pr.1854.4':
+  '@stacks/encryption@7.5.1-pr.1854.0':
     dependencies:
       '@noble/hashes': 1.1.5
       '@noble/secp256k1': 1.7.1
       '@scure/bip39': 1.1.0
-      '@stacks/common': 7.4.1-pr.1854.4
+      '@stacks/common': 7.5.1-pr.1854.0
       base64-js: 1.5.1
       bs58: 5.0.0
       ripemd160-min: 0.0.6
       varuint-bitcoin: 1.1.2
 
-  '@stacks/network@7.4.1-pr.1854.4':
+  '@stacks/network@7.5.1-pr.1854.0':
     dependencies:
-      '@stacks/common': 7.4.1-pr.1854.4
+      '@stacks/common': 7.5.1-pr.1854.0
       cross-fetch: 3.2.0
     transitivePeerDependencies:
       - encoding
 
-  '@stacks/transactions@7.4.1-pr.1854.4':
+  '@stacks/transactions@7.5.1-pr.1854.0':
     dependencies:
       '@noble/hashes': 1.1.5
       '@noble/secp256k1': 1.7.1
-      '@stacks/common': 7.4.1-pr.1854.4
-      '@stacks/network': 7.4.1-pr.1854.4
+      '@stacks/common': 7.5.1-pr.1854.0
+      '@stacks/network': 7.5.1-pr.1854.0
       c32check: 2.0.0
       lodash.clonedeep: 4.5.0
     transitivePeerDependencies:

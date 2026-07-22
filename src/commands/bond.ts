@@ -1,7 +1,8 @@
 import {
+  BOND_END_OFFSET_PERIODS,
   bondPeriodToBurnHeight,
   bondPeriodToRewardCycle,
-  bondPhaseRanges,
+  bondStatus,
   burnHeightToDistributionIndex,
   burnHeightToRewardCycle,
   currentDistributionCycle,
@@ -11,7 +12,6 @@ import {
   fetchPoxInfo,
   fetchProtocolBond,
   fetchTotalSbtcStakedForBond,
-  type BondPhaseName,
   type PoxInfo,
 } from '@stacks/bitcoin-staking';
 import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/transactions';
@@ -20,8 +20,6 @@ import { CliError } from '../errors.js';
 import { explorerLink } from '../explorer.js';
 import { resolveFirstPox5Cycle, withFirstPox5Cycle } from '../pox.js';
 import { bitcoinBlocks, bps, dim, output, percent, printNote, printRows, printSection, sats, type Row } from '../output.js';
-
-const BOND_END_OFFSET_PERIODS = 6;
 
 interface RewardsTiming {
   distLen: number;
@@ -105,15 +103,6 @@ interface FillBreakdown {
   byStaker: Map<string, { sats: bigint; isL1: boolean; earlyExitedSats: bigint; unstakedSats: bigint }>;
 }
 
-function phaseAt(burnHeight: number, pox: PoxInfo, bondIndex: number): BondPhaseName | 'pre-announce' | 'ended' {
-  const ranges = bondPhaseRanges({ bondIndex, poxInfo: pox });
-  if (ranges.length === 0 || burnHeight < ranges[0]!.startBurnHeight) return 'pre-announce';
-  for (const r of ranges) {
-    if (burnHeight >= r.startBurnHeight && burnHeight < r.endBurnHeight) return r.name;
-  }
-  return 'ended';
-}
-
 export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): Promise<void> {
   const [pox, bond, filledSbtc] = await Promise.all([
     fetchPoxInfo(ctx.net),
@@ -156,7 +145,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
   let schedule:
     | {
         firstRewardCycle: number;
-        openBitcoinBlockHeight: number;
+        bondStartBitcoinBlockHeight: number;
         status: string;
         l1UnlockHeight: bigint;
         rewards: RewardsTiming;
@@ -166,8 +155,8 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
     const p = withFirstPox5Cycle(pox, firstPox5);
     schedule = {
       firstRewardCycle: bondPeriodToRewardCycle({ bondIndex, poxInfo: p }),
-      openBitcoinBlockHeight: bondPeriodToBurnHeight({ bondIndex, poxInfo: p }),
-      status: phaseAt(pox.currentBurnchainBlockHeight, p, bondIndex),
+      bondStartBitcoinBlockHeight: bondPeriodToBurnHeight({ bondIndex, poxInfo: p }),
+      status: bondStatus({ bondIndex, poxInfo: p, isBondSetup: true }),
       l1UnlockHeight: await fetchBondL1UnlockHeight({ bondIndex, ...ctx.net }),
       rewards: rewardsTiming(p, bondIndex, pox.currentBurnchainBlockHeight),
     };
@@ -192,7 +181,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       capacitySats: capacitySats ?? null,
       allowlist: allowlist ?? null,
       allowlistTruncated: allowlistTruncated || undefined,
-      allowances,
+      allowances: allowances.map((a) => ({ ...a, allocationSats: a.allocationSats ?? null })),
       schedule: schedule ?? null,
     },
     () => {
@@ -221,8 +210,13 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       }
       for (const a of allowances) {
         rows.push(['allowance', explorerLink(ctx.config, a.address)]);
-        rows.push(['  allocation', sats(a.allocationSats)]);
-        rows.push(['  filled', `${sats(a.filledSats)} — ${percent(a.filledSats, a.allocationSats)} of allocation`]);
+        rows.push(['  allocation', a.allocationSats === undefined ? 'not allowlisted' : sats(a.allocationSats)]);
+        rows.push([
+          '  filled',
+          a.allocationSats === undefined
+            ? sats(a.filledSats)
+            : `${sats(a.filledSats)} — ${percent(a.filledSats, a.allocationSats)} of allocation`,
+        ]);
         if (a.earlyExitedSats > 0n) rows.push(['  early-exited', sats(a.earlyExitedSats)]);
         if (a.unstakedSats > 0n) rows.push(['  unstaked', sats(a.unstakedSats)]);
       }
@@ -255,7 +249,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
         printRows([
           ['status', schedule.status],
           ['first reward cycle', schedule.firstRewardCycle],
-          ['open Bitcoin block height', schedule.openBitcoinBlockHeight],
+          ['bond start Bitcoin block height', schedule.bondStartBitcoinBlockHeight],
           ['L1 unlock height', schedule.l1UnlockHeight],
         ]);
 

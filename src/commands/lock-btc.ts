@@ -1,9 +1,6 @@
 import {
   bondPeriodToBurnHeight,
-  buildLockOutputScript,
-  buildLockScript,
-  buildUnlockScript,
-  computeBondUnlockHeight,
+  buildRegisterMetadata,
   fetchBondAllowance,
   fetchConstructLockupOutputScript,
   fetchPoxInfo,
@@ -21,6 +18,7 @@ import {
   fetchBtcTxHex,
   parseTxOutput,
   resolveBtcKey,
+  stacksNetworkForBtc,
   type BtcNetworkName,
 } from '../btc.js';
 import { bitcoinAddressLink, bitcoinTxLink, explorerLink } from '../explorer.js';
@@ -78,6 +76,11 @@ export async function lockBtcCommand(ctx: Ctx, opts: LockBtcOpts): Promise<void>
   }
 
   const allowance = await fetchBondAllowance({ bondIndex: opts.bond, address: stxAddress, ...ctx.net });
+  if (allowance === undefined) {
+    throw new CliError(
+      `${stxAddress} is not allowlisted for bond ${opts.bond} — refusing to fund a lock that cannot be registered (ERR_NOT_ALLOWLISTED u11)`,
+    );
+  }
   if (allowance < satsAmount) {
     throw new CliError(
       `allowlist cap for ${stxAddress} on bond ${opts.bond} is ${allowance} sats — ` +
@@ -85,20 +88,21 @@ export async function lockBtcCommand(ctx: Ctx, opts: LockBtcOpts): Promise<void>
     );
   }
 
-  const unlockHeight = computeBondUnlockHeight({ bondIndex: opts.bond, poxInfo: pox });
-  const unlockBytes = buildUnlockScript(key.publicKey);
-  const lockingScript = buildLockScript({
+  const metadata = buildRegisterMetadata({
+    bondIndex: opts.bond,
+    poxInfo: pox,
+    bitcoinPublicKey: key.publicKey,
     stxAddress,
+    earlyUnlockBytes: bond.earlyUnlockBytes,
+    network: stacksNetworkForBtc(opts.btcNetwork),
+  });
+  const {
     unlockHeight,
     unlockBytes,
-    earlyUnlockBytes: bond.earlyUnlockBytes,
-  });
-  const lockOutputScript = buildLockOutputScript({
-    stxAddress,
-    unlockHeight,
-    unlockBytes,
-    earlyUnlockBytes: bond.earlyUnlockBytes,
-  });
+    lockScript: lockingScript,
+    outputScript: lockOutputScript,
+    lockAddress,
+  } = metadata;
   const onChainOutputScript = bytesToHex(
     await fetchConstructLockupOutputScript({
       stxAddress,
@@ -114,7 +118,6 @@ export async function lockBtcCommand(ctx: Ctx, opts: LockBtcOpts): Promise<void>
         'locking to it would strand the BTC (the script template likely changed; update the CLI)',
     );
   }
-  const lockAddress = btc.Address(net).encode({ type: 'wsh', hash: lockOutputScript.slice(2) });
   const ownScript = btc.p2wpkh(hexToBytes(key.publicKey), net).script;
 
   const inputs: { ref: UtxoRef; amount: bigint }[] = [];

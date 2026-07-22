@@ -1,18 +1,15 @@
 import {
   buildAnnounceL1EarlyExit,
-  buildLockOutputScript,
-  buildLockScript,
-  buildUnlockScript,
-  computeBondUnlockHeight,
-  computeRegisterPreimage,
+  buildReclaim,
+  buildRegisterMetadata,
+  fetchEligibleAnnounceL1EarlyExit,
   fetchBondMembership,
   fetchConstructLockupOutputScript,
-  fetchHasAnnouncedL1EarlyExit,
   fetchPoxInfo,
   fetchProtocolBond,
+  finalizeReclaim,
 } from '@stacks/bitcoin-staking';
 import { bytesToHex } from '@stacks/common';
-import * as btc from '@scure/btc-signer';
 import {
   fetchNonce,
   getAddressFromPrivateKey,
@@ -20,24 +17,21 @@ import {
   publicKeyToHex,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { CliError, eligibilityBlockers } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import {
   broadcastBtcTx,
   btcNetwork,
-  buildEarlyExitSpend,
   fetchBtcTxHex,
-  parseSingleKeyEarlyUnlock,
   parseTxOutput,
   resolveBtcKey,
+  stacksNetworkForBtc,
   type BtcNetworkName,
 } from '../btc.js';
 import { bitcoinAddressLink, bitcoinTxLink, explorerLink, explorerTxLink } from '../explorer.js';
 import { requirePoxWithBondCycle } from '../pox.js';
 import { signAndConfirm, txStatusLabel, type TxOutcome } from '../tx.js';
 import { output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
-
-const DUST_SATS = 546n;
 
 export interface UtxoRef {
   txid: string;
@@ -84,34 +78,21 @@ export async function earlyExitCommand(ctx: Ctx, opts: EarlyExitOpts): Promise<v
     const key = resolveBtcKey(net);
     const to = opts.to ?? key.address;
 
-    const single = parseSingleKeyEarlyUnlock(bond.earlyUnlockBytes);
-    if (!single) {
-      throw new CliError(
-        `bond ${opts.bond}'s early-unlock-bytes is not the single-key form (21<pubkey>ac|ad) — ` +
-          'the CLI can only assemble the early-exit witness for a single-key early-unlock fragment',
-      );
-    }
-    if (single.publicKey !== key.publicKey) {
-      throw new CliError(
-        `bond ${opts.bond}'s early-unlock key (${single.publicKey}) is not POX5_BTC_WIF (${key.publicKey}) — ` +
-          'only the early-unlock signer can authorize the early-exit branch, so this lock cannot be self-exited',
-      );
-    }
-
-    const unlockHeight = computeBondUnlockHeight({ bondIndex: opts.bond, poxInfo: pox });
-    const stakerUnlockBytes = buildUnlockScript(key.publicKey);
-    const witnessScript = buildLockScript({
+    const metadata = buildRegisterMetadata({
+      bondIndex: opts.bond,
+      poxInfo: pox,
+      bitcoinPublicKey: key.publicKey,
       stxAddress: staker,
+      earlyUnlockBytes: bond.earlyUnlockBytes,
+      network: stacksNetworkForBtc(opts.btcNetwork),
+    });
+    const {
       unlockHeight,
       unlockBytes: stakerUnlockBytes,
-      earlyUnlockBytes: bond.earlyUnlockBytes,
-    });
-    const lockOutputScript = buildLockOutputScript({
-      stxAddress: staker,
-      unlockHeight,
-      unlockBytes: stakerUnlockBytes,
-      earlyUnlockBytes: bond.earlyUnlockBytes,
-    });
+      lockScript: witnessScript,
+      outputScript: lockOutputScript,
+      lockAddress,
+    } = metadata;
     const onChain = bytesToHex(
       await fetchConstructLockupOutputScript({
         stxAddress: staker,
@@ -136,43 +117,49 @@ export async function earlyExitCommand(ctx: Ctx, opts: EarlyExitOpts): Promise<v
           'pass the output of the lock-btc transaction for this bond and staker',
       );
     }
-    if (lockOut.amount - opts.btcFee <= DUST_SATS) {
-      throw new CliError(`lock holds ${lockOut.amount} sats — too little to cover the ${opts.btcFee} sats fee above dust`);
+    let spend: ReturnType<typeof finalizeReclaim>;
+    try {
+      const reclaim = buildReclaim({
+        path: 'early-exit',
+        utxo: { txid: opts.utxo.txid, vout: opts.utxo.vout, value: lockOut.amount, scriptPubKey: lockOut.script },
+        network: stacksNetworkForBtc(opts.btcNetwork),
+        output: { address: to, feeSats: opts.btcFee },
+        lockScript: witnessScript,
+      });
+      reclaim.signIdx(key.privateKey, 0);
+      spend = finalizeReclaim({ path: 'early-exit', tx: reclaim, stxAddress: staker });
+    } catch (e) {
+      throw new CliError(
+        `could not build the early-exit reclaim: ${(e as Error).message}. ` +
+          'POX5_BTC_WIF must authorize both the staker and early-exit signature slots for a self-exit',
+      );
     }
-
-    const lockAddress = btc.Address(net).encode({ type: 'wsh', hash: lockOutputScript.slice(2) });
-    const spend = buildEarlyExitSpend({
-      lockTxid: opts.utxo.txid,
-      lockVout: opts.utxo.vout,
-      lockAmount: lockOut.amount,
-      lockScriptPubKey: lockOut.script,
-      witnessScript,
-      preimage: computeRegisterPreimage(staker),
-      needsFiller: single.needsFiller,
-      privateKey: key.privateKey,
+    l1 = {
+      lockAddress,
+      lockSats: lockOut.amount,
+      outputSats: lockOut.amount - opts.btcFee,
       to,
-      feeSats: opts.btcFee,
-      network: net,
-    });
-    l1 = { lockAddress, lockSats: lockOut.amount, outputSats: spend.outputSats, to, txid: spend.txid, txHex: spend.txHex };
+      txid: spend.txid,
+      txHex: spend.txHex,
+    };
   }
 
   // --- L2: announce-l1-early-exit ---
   let l2: { tx: Awaited<ReturnType<typeof buildAnnounceL1EarlyExit>>; nonce: bigint; blockers: string[] } | undefined;
   if (opts.announce) {
-    const [nonce, alreadyAnnounced] = await Promise.all([
+    const [nonce, eligibility] = await Promise.all([
       fetchNonce({ address: staker, ...ctx.net }),
-      fetchHasAnnouncedL1EarlyExit({ bondIndex: opts.bond, staker, ...ctx.net }),
+      fetchEligibleAnnounceL1EarlyExit({
+        staker,
+        oldSignerManager: signerManager,
+        poxInfo: pox,
+        ...ctx.net,
+      }),
     ]);
-    const blockers: string[] = [];
-    if (membership === undefined) {
-      blockers.push(`${staker} has no active bond membership (ERR_NOT_BOND_PARTICIPANT u34)`);
-    } else {
-      if (!membership.isL1Lock) blockers.push('membership is sBTC-backed, not an L1 lock — use unstake-sbtc (ERR_CANNOT_ANNOUNCE_L1_EARLY_UNLOCK u35)');
-      if (membership.bondIndex !== opts.bond) blockers.push(`active membership is bond ${membership.bondIndex}, not ${opts.bond}`);
-      if (membership.signer !== signerManager) blockers.push(`signer-manager ${signerManager} does not match the membership signer ${membership.signer} (ERR_INVALID_OLD_SIGNER_MANAGER u36)`);
+    const blockers = eligibilityBlockers(eligibility);
+    if (membership !== undefined && membership.bondIndex !== opts.bond) {
+      blockers.push(`active membership is bond ${membership.bondIndex}, not ${opts.bond}`);
     }
-    if (alreadyAnnounced) blockers.push(`early exit already announced for bond ${opts.bond} (ERR_L1_EARLY_EXIT_ALREADY_ANNOUNCED u50)`);
 
     const tx = await buildAnnounceL1EarlyExit({
       staker,

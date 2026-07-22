@@ -3,11 +3,9 @@ import {
   bondPeriodToRewardCycle,
   buildRegisterForBond,
   fetchBondAllowance,
-  fetchBondMembership,
+  fetchEligibleRegisterForBond,
   fetchPoxInfo,
   fetchProtocolBond,
-  fetchSignerInfo,
-  isInPreparePhase,
   minUstxForSatsAmount,
 } from '@stacks/bitcoin-staking';
 import {
@@ -18,7 +16,7 @@ import {
   publicKeyToHex,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { CliError, eligibilityBlockers } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
 import { fetchSbtcBalance, fetchSbtcContractId, requirePoxWithBondCycle } from '../pox.js';
@@ -62,15 +60,27 @@ export async function stakeSbtcCommand(ctx: Ctx, opts: StakeSbtcOpts): Promise<v
   const bitcoinHeight = pox.currentBurnchainBlockHeight;
   const startBurnHeight = bondPeriodToBurnHeight({ bondIndex: opts.bond, poxInfo: pox });
   const firstRewardCycle = bondPeriodToRewardCycle({ bondIndex: opts.bond, poxInfo: pox });
-  const tooLate = bitcoinHeight >= startBurnHeight;
-  const inPrepare = isInPreparePhase({ burnHeight: bitcoinHeight, poxInfo: pox });
 
-  const [signerInfo, membership, allowance, nonce, sbtcInfo] = await Promise.all([
-    fetchSignerInfo({ signerManager, ...ctx.net }),
-    fetchBondMembership({ address: sender, ...ctx.net }),
+  const minUstx = minUstxForSatsAmount({
+    sats: opts.amountSats,
+    stxValueRatio: bond.stxValueRatio,
+    minUstxRatioBps: bond.minUstxRatioBps,
+  });
+  const amountUstx = opts.amountUstx ?? minUstx;
+
+  const [allowance, nonce, sbtcInfo, eligibility] = await Promise.all([
     fetchBondAllowance({ bondIndex: opts.bond, address: sender, ...ctx.net }),
     fetchNonce({ address: sender, ...ctx.net }),
     fetchSbtcBalance(ctx, sender),
+    fetchEligibleRegisterForBond({
+      bondIndex: opts.bond,
+      staker: sender,
+      amountUstx,
+      satsTotal: opts.amountSats,
+      signerManager,
+      poxInfo: pox,
+      ...ctx.net,
+    }),
   ]);
 
   const sbtcContractId = sbtcInfo?.contractId ?? (await fetchSbtcContractId(ctx));
@@ -80,18 +90,6 @@ export async function stakeSbtcCommand(ctx: Ctx, opts: StakeSbtcOpts): Promise<v
     );
   }
   const sbtcBalance = sbtcInfo?.balance;
-
-  const minUstx = minUstxForSatsAmount({
-    sats: opts.amountSats,
-    stxValueRatio: bond.stxValueRatio,
-    minUstxRatioBps: bond.minUstxRatioBps,
-  });
-  const amountUstx = opts.amountUstx ?? minUstx;
-  if (amountUstx < minUstx) {
-    throw new CliError(
-      `--amount ${amountUstx} uSTX is below the bond minimum ${minUstx} uSTX for ${opts.amountSats} sats (ERR_INSUFFICIENT_STX u8)`,
-    );
-  }
 
   const postConditions = [
     Pc.principal(sender)
@@ -121,27 +119,12 @@ export async function stakeSbtcCommand(ctx: Ctx, opts: StakeSbtcOpts): Promise<v
     ['sBTC token', explorerLink(ctx.config, sbtcContractId)],
     ['sBTC balance', sbtcBalance !== undefined ? sbtc(sbtcBalance) : null],
     ['paired STX', `${stx(amountUstx)} (minimum ${stx(minUstx)})`],
-    ['allowlist cap', sats(allowance)],
+    ['allowlist cap', allowance === undefined ? 'not allowlisted' : sats(allowance)],
     ['fee', stx(opts.fee)],
     ['nonce', nonce],
   ];
 
-  const blockers: string[] = [];
-  if (tooLate) {
-    blockers.push(`bond ${opts.bond} already started at Bitcoin block ${startBurnHeight} (ERR_BOND_ALREADY_STARTED u43)`);
-  }
-  if (inPrepare) {
-    blockers.push('the chain is in the prepare phase — staking is rejected until the next reward phase (ERR_STAKE_IN_PREPARE_PHASE u47)');
-  }
-  if (signerInfo === undefined) {
-    blockers.push(`signer-manager ${signerManager} is not registered (ERR_SIGNER_NOT_FOUND u23) — run setup-signer`);
-  }
-  if (allowance < opts.amountSats) {
-    blockers.push(`allowlist cap is ${allowance} sats, below the ${opts.amountSats} sats stake (ERR_TOO_MUCH_SATS u10)`);
-  }
-  if (membership !== undefined && Math.abs(membership.bondIndex - opts.bond) < 6) {
-    blockers.push(`staker already holds an overlapping bond membership (bond ${membership.bondIndex}) (ERR_ALREADY_REGISTERED u9)`);
-  }
+  const blockers = eligibilityBlockers(eligibility);
   if (sbtcBalance !== undefined && sbtcBalance < opts.amountSats) {
     blockers.push(`sBTC balance is ${sbtcBalance} sats, below the ${opts.amountSats} sats stake — the contract's sBTC transfer would fail (run faucet sbtc)`);
   }
@@ -157,7 +140,7 @@ export async function stakeSbtcCommand(ctx: Ctx, opts: StakeSbtcOpts): Promise<v
     sbtcBalance: sbtcBalance ?? null,
     amountUstx,
     minUstx,
-    allowanceSats: allowance,
+    allowanceSats: allowance ?? null,
     fee: opts.fee,
     nonce,
     blockers,

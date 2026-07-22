@@ -1,4 +1,8 @@
-import { fetchEarned } from '@stacks/bitcoin-staking';
+import {
+  BOND_END_OFFSET_PERIODS,
+  fetchEarned,
+  fetchEligibleClaimRewards,
+} from '@stacks/bitcoin-staking';
 import {
   PostConditionMode,
   fetchNonce,
@@ -10,13 +14,11 @@ import {
   uintCV,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { CliError, eligibilityBlockers } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
 import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
-
-const MAX_BOND_PERIODS = 6;
 
 export interface ClaimRewardsOpts {
   signerManager?: string;
@@ -38,8 +40,8 @@ async function managerHasClaimRewards(ctx: Ctx, address: string, name: string): 
 }
 
 export async function claimRewardsCommand(ctx: Ctx, opts: ClaimRewardsOpts): Promise<void> {
-  if (opts.bonds.length > MAX_BOND_PERIODS) {
-    throw new CliError(`at most ${MAX_BOND_PERIODS} bonds can be passed (got ${opts.bonds.length})`);
+  if (opts.bonds.length > BOND_END_OFFSET_PERIODS) {
+    throw new CliError(`at most ${BOND_END_OFFSET_PERIODS} bonds can be passed (got ${opts.bonds.length})`);
   }
 
   const privateKey = resolveStxPrivateKey();
@@ -51,11 +53,17 @@ export async function claimRewardsCommand(ctx: Ctx, opts: ClaimRewardsOpts): Pro
     throw new CliError(`--signer-manager must be a contract principal <address>.<name> (got "${signerManager}")`);
   }
 
-  const [stxEarned, bondEarned, hasClaim, nonce] = await Promise.all([
+  const [stxEarned, bondEarned, hasClaim, nonce, eligibility] = await Promise.all([
     fetchEarned({ signerManager, rewardCycle: opts.cycle, ...ctx.net }),
     Promise.all(opts.bonds.map((bondIndex) => fetchEarned({ signerManager, rewardCycle: opts.cycle, bondIndex, ...ctx.net }))),
     managerHasClaimRewards(ctx, smAddress, smName),
     fetchNonce({ address: sender, ...ctx.net }),
+    fetchEligibleClaimRewards({
+      signerManager,
+      rewardCycle: opts.cycle,
+      bondIndices: opts.bonds,
+      ...ctx.net,
+    }),
   ]);
   const bondTotal = bondEarned.reduce((acc, v) => acc + v, 0n);
   const totalEarned = stxEarned + bondTotal;
@@ -81,17 +89,11 @@ export async function claimRewardsCommand(ctx: Ctx, opts: ClaimRewardsOpts): Pro
   opts.bonds.forEach((bondIndex, idx) => baseRows.push([`bond ${bondIndex} earned`, sats(bondEarned[idx]!)]));
   baseRows.push(['total claimable', sats(totalEarned)], ['fee', stx(opts.fee)], ['nonce', nonce]);
 
-  const blockers: string[] = [];
+  const blockers = eligibilityBlockers(eligibility);
   if (hasClaim === false) {
     blockers.push(
       `signer-manager ${signerManager} has no claim-rewards entrypoint — the minimal setup-signer manager cannot ` +
         'forward claims; deploy one whose claim-rewards calls (contract-call? .pox-5 claim-rewards bond-periods reward-cycle)',
-    );
-  }
-  if (totalEarned === 0n) {
-    blockers.push(
-      'no claimable sBTC across the requested legs (ERR_NO_CLAIMABLE_REWARDS u32) — run calculate-rewards first, ' +
-        'and pass the settled --cycle plus each --bond leg the signer covers',
     );
   }
 

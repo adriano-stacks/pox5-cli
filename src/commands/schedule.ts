@@ -1,9 +1,10 @@
 import {
   bondPhaseRanges,
+  bondStatus,
   fetchBondL1UnlockHeight,
   fetchPoxInfo,
+  fetchProtocolBond,
   isBondActiveAtHeight,
-  type BondPhaseName,
 } from '@stacks/bitcoin-staking';
 import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
@@ -12,14 +13,12 @@ import { bitcoinBlocks, bold, output, printNote, printRows, printSection } from 
 
 const EVENT_PAGE_SIZE = 50;
 const EVENT_MAX_PAGES = 100;
-const BOND_GAP_CYCLES = 2;
 
 interface PhaseDef {
   name: string;
   start: number;
   end: number;
   point?: boolean;
-  terminal?: boolean;
 }
 
 export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void> {
@@ -28,40 +27,38 @@ export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void
   const now = raw.currentBurnchainBlockHeight;
 
   const ranges = bondPhaseRanges({ bondIndex, poxInfo: pox });
-  const startOf = (name: BondPhaseName): number => ranges.find((r) => r.name === name)!.startBurnHeight;
-  const bondStart = startOf('locked');
-  const reLockStart = startOf('unlocked');
-  const closeHeight = startOf('closed');
-  const setupWindowOpen = bondStart - BOND_GAP_CYCLES * pox.rewardCycleLength;
+  const setupWindowOpen = ranges[0]!.startBurnHeight;
 
-  const [l1Unlock, announced] = await Promise.all([
+  const [l1Unlock, announced, bond] = await Promise.all([
     fetchBondL1UnlockHeight({ bondIndex, ...ctx.net }),
     fetchAnnouncementHeight(ctx, bondIndex),
+    fetchProtocolBond({ bondIndex, ...ctx.net }),
   ]);
-  const active = isBondActiveAtHeight({ bondIndex, burnHeight: now, poxInfo: pox });
+  const currentPhase = bondStatus({ bondIndex, poxInfo: pox, isBondSetup: bond !== undefined });
+  const active =
+    bond !== undefined && isBondActiveAtHeight({ bondIndex, burnHeight: now, poxInfo: pox });
   const announceHeight = announced ?? setupWindowOpen;
 
   const defs: PhaseDef[] = [
     { name: 'announced', start: announceHeight, end: announceHeight, point: true },
-    { name: 'open', start: announceHeight, end: bondStart },
-    { name: 'active', start: bondStart, end: reLockStart },
-    { name: 're-lock-window', start: reLockStart, end: closeHeight },
-    { name: 'closed', start: closeHeight, end: closeHeight, point: true, terminal: true },
+    ...ranges.map((range) => ({
+      name: range.name,
+      start: range.name === 'open' ? Math.max(announceHeight, range.startBurnHeight) : range.startBurnHeight,
+      end: range.endBurnHeight,
+    })),
   ];
 
   const phases = defs.map((d) => {
     const isPoint = d.point === true;
-    const current = d.terminal ? now >= d.start : isPoint ? false : now >= d.start && now < d.end;
     return {
       name: d.name,
       startBitcoinBlockHeight: d.start,
       endBitcoinBlockHeight: isPoint ? null : d.end,
       lengthBlocks: isPoint ? null : d.end - d.start,
       blocksUntilStart: Math.max(0, d.start - now),
-      current,
+      current: !isPoint && d.name === currentPhase,
     };
   });
-  const currentPhase = phases.find((p) => p.current)?.name;
 
   output(
     ctx,

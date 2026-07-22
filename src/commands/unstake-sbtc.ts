@@ -1,4 +1,8 @@
-import { buildUnstakeSbtc, fetchBondMembership } from '@stacks/bitcoin-staking';
+import {
+  buildUnstakeSbtc,
+  fetchEligibleUnstakeSbtc,
+  fetchProtocolBondMemberships,
+} from '@stacks/bitcoin-staking';
 import {
   Pc,
   fetchNonce,
@@ -7,7 +11,7 @@ import {
   publicKeyToHex,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { CliError, eligibilityBlockers } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
 import { fetchSbtcBalance, fetchSbtcContractId } from '../pox.js';
@@ -29,7 +33,7 @@ export async function unstakeSbtcCommand(ctx: Ctx, opts: UnstakeSbtcOpts): Promi
   const publicKey = publicKeyToHex(privateKeyToPublic(privateKey));
 
   const [membership, sbtcInfo, nonce] = await Promise.all([
-    fetchBondMembership({ address: sender, ...ctx.net }),
+    fetchProtocolBondMemberships({ address: sender, ...ctx.net }),
     fetchSbtcBalance(ctx, sender),
     fetchNonce({ address: sender, ...ctx.net }),
   ]);
@@ -44,6 +48,12 @@ export async function unstakeSbtcCommand(ctx: Ctx, opts: UnstakeSbtcOpts): Promi
   }
 
   const signerManager = opts.signerManager ?? membership.signer;
+  const eligibility = await fetchEligibleUnstakeSbtc({
+    staker: sender,
+    signerManager,
+    amountToWithdrawSats: opts.amountSats,
+    ...ctx.net,
+  });
   const sbtcContractId = sbtcInfo?.contractId ?? (await fetchSbtcContractId(ctx));
   if (!sbtcContractId) {
     throw new CliError(
@@ -82,17 +92,7 @@ export async function unstakeSbtcCommand(ctx: Ctx, opts: UnstakeSbtcOpts): Promi
     ['nonce', nonce],
   ];
 
-  const blockers: string[] = [];
-  if (opts.amountSats > membership.amountSats) {
-    blockers.push(
-      `withdraw ${opts.amountSats} sats exceeds the ${membership.amountSats} sats staked (ERR_INVALID_UNSTAKE_SBTC_AMOUNT u37)`,
-    );
-  }
-  if (signerManager !== membership.signer) {
-    blockers.push(
-      `--signer-manager ${signerManager} does not match the membership signer ${membership.signer} (ERR_INVALID_OLD_SIGNER_MANAGER u36)`,
-    );
-  }
+  const blockers = eligibilityBlockers(eligibility);
 
   const json = {
     staker: sender,

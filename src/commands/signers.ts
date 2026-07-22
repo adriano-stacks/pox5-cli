@@ -1,14 +1,17 @@
 import {
+  fetchAmountDelegatedForSigner,
   fetchPoxInfo,
+  fetchSignerCycleMembership,
   fetchSignerInfo,
+  fetchSignerSetFirstItem,
+  fetchSignerSetNextItem,
   fetchSignerSharesStakedForCycle,
   fetchTotalSharesStakedForCycle,
   fetchTotalUstxStacked,
 } from '@stacks/bitcoin-staking';
-import { Cl, ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/transactions';
+import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
-import { callPoxReadOnly } from '../pox.js';
 import { explorerLink } from '../explorer.js';
 import {
   clearProgress,
@@ -148,29 +151,29 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
 async function collectSignerSet(ctx: Ctx, cycle: number): Promise<SignerEntry[]> {
   const entries: SignerEntry[] = [];
   const seen = new Set<string>();
-  let signer = unwrapOptional(await callPoxReadOnly(ctx, 'get-signer-set-first-item-for-cycle', [Cl.uint(cycle)]));
+  let signer = await fetchSignerSetFirstItem({ cycle, ...ctx.net });
 
   while (signer) {
-    const principal = cvToValue(signer) as string;
+    const principal = signer;
     if (seen.has(principal)) break;
     seen.add(principal);
 
-    const [delegatedCv, info, shares, nextCv] = await Promise.all([
-      callPoxReadOnly(ctx, 'get-amount-delegated-for-signer', [Cl.principal(principal), Cl.uint(cycle)]),
+    const [delegatedUstx, info, shares, next] = await Promise.all([
+      fetchAmountDelegatedForSigner({ signerManager: principal, cycle, ...ctx.net }),
       fetchSignerInfo({ signerManager: principal, ...ctx.net }),
       fetchSignerSharesStakedForCycle({ signerManager: principal, rewardCycle: cycle, ...ctx.net }),
-      callPoxReadOnly(ctx, 'get-signer-set-next-item-for-cycle', [Cl.principal(principal), Cl.uint(cycle)]),
+      fetchSignerSetNextItem({ signer: principal, cycle, ...ctx.net }),
     ]);
 
     entries.push({
       signerManager: principal,
       controlledBy: contractIssuer(principal),
       signerKey: info?.signerKey ?? null,
-      delegatedUstx: (delegatedCv as { value: bigint }).value,
+      delegatedUstx,
       shares,
       stakers: null,
     });
-    signer = unwrapOptional(nextCv);
+    signer = next;
   }
   return entries;
 }
@@ -225,15 +228,12 @@ function stakerFromEventHex(hex: string | undefined): string | undefined {
 }
 
 async function resolveStaker(ctx: Ctx, staker: string, cycle: number): Promise<StakerEntry> {
-  const membership = unwrapOptional(
-    await callPoxReadOnly(ctx, 'get-signer-cycle-membership', [Cl.principal(staker), Cl.uint(cycle)]),
-  );
+  const membership = await fetchSignerCycleMembership({ staker, cycle, ...ctx.net });
   if (!membership) return { staker, signer: null, amountUstx: null };
-  const tuple = (membership as { value: Record<string, ClarityValue> }).value;
   return {
     staker,
-    signer: cvToValue(tuple['signer']!) as string,
-    amountUstx: (tuple['amount-ustx'] as { value: bigint }).value,
+    signer: membership.signer,
+    amountUstx: membership.amountUstx,
   };
 }
 
@@ -267,10 +267,6 @@ function printSignerStakers(ctx: Ctx, stakers: StakerEntry[] | null, complete: b
 function contractIssuer(principal: string): string | null {
   const dot = principal.indexOf('.');
   return dot === -1 ? null : principal.slice(0, dot);
-}
-
-function unwrapOptional(cv: ClarityValue): ClarityValue | undefined {
-  return cv.type === ClarityType.OptionalNone ? undefined : (cv as { value: ClarityValue }).value;
 }
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {

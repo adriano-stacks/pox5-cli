@@ -1,18 +1,14 @@
 import {
   bondPeriodToBurnHeight,
   bondPeriodToRewardCycle,
-  buildLockOutputScript,
   buildLockProofFromBlock,
+  buildRegisterMetadata,
   buildRegisterForBond,
-  buildUnlockScript,
-  computeBondUnlockHeight,
   fetchBondAllowance,
-  fetchBondMembership,
   fetchConstructLockupOutputScript,
+  fetchEligibleRegisterForBond,
   fetchPoxInfo,
   fetchProtocolBond,
-  fetchSignerInfo,
-  isInPreparePhase,
   minUstxForSatsAmount,
   type BondL1LockupOutput,
 } from '@stacks/bitcoin-staking';
@@ -24,7 +20,7 @@ import {
   publicKeyToHex,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { CliError, eligibilityBlockers } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import {
   btcNetwork,
@@ -34,6 +30,7 @@ import {
   fetchBtcTxHex,
   fetchBtcTxStatus,
   resolveBtcKey,
+  stacksNetworkForBtc,
   type BtcNetworkName,
 } from '../btc.js';
 import { bitcoinTxLink, explorerLink, explorerTxLink } from '../explorer.js';
@@ -108,12 +105,8 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
   const bitcoinHeight = pox.currentBurnchainBlockHeight;
   const startBurnHeight = bondPeriodToBurnHeight({ bondIndex: opts.bond, poxInfo: pox });
   const firstRewardCycle = bondPeriodToRewardCycle({ bondIndex: opts.bond, poxInfo: pox });
-  const tooLate = bitcoinHeight >= startBurnHeight;
-  const inPrepare = isInPreparePhase({ burnHeight: bitcoinHeight, poxInfo: pox });
 
-  const [signerInfo, membership, allowance, nonce] = await Promise.all([
-    fetchSignerInfo({ signerManager, ...ctx.net }),
-    fetchBondMembership({ address: sender, ...ctx.net }),
+  const [allowance, nonce] = await Promise.all([
     fetchBondAllowance({ bondIndex: opts.bond, address: sender, ...ctx.net }),
     fetchNonce({ address: sender, ...ctx.net }),
   ]);
@@ -125,14 +118,15 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
     fetchBlockTxids(ctx.config, lockBlock.blockHash),
   ]);
 
-  const unlockHeight = computeBondUnlockHeight({ bondIndex: opts.bond, poxInfo: pox });
-  const unlockBytes = buildUnlockScript(key.publicKey);
-  const expectedScript = buildLockOutputScript({
+  const metadata = buildRegisterMetadata({
+    bondIndex: opts.bond,
+    poxInfo: pox,
+    bitcoinPublicKey: key.publicKey,
     stxAddress: sender,
-    unlockHeight,
-    unlockBytes,
     earlyUnlockBytes: bond.earlyUnlockBytes,
+    network: stacksNetworkForBtc(opts.btcNetwork),
   });
+  const { unlockHeight, unlockBytes, lockScript, outputScript: expectedScript } = metadata;
   const onChainOutputScript = bytesToHex(
     await fetchConstructLockupOutputScript({
       stxAddress: sender,
@@ -156,7 +150,8 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
       header,
       blockHeight: lockBlock.height,
       txids,
-      expectedScript,
+      unlockHeight,
+      lockScript,
     });
   } catch (e) {
     throw new CliError(
@@ -172,11 +167,16 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
     minUstxRatioBps: bond.minUstxRatioBps,
   });
   const amountUstx = opts.amountUstx ?? minUstx;
-  if (amountUstx < minUstx) {
-    throw new CliError(
-      `--amount ${amountUstx} uSTX is below the bond minimum ${minUstx} uSTX for ${lockedSats} sats (ERR_INSUFFICIENT_STX u8)`,
-    );
-  }
+  const eligibility = await fetchEligibleRegisterForBond({
+    bondIndex: opts.bond,
+    staker: sender,
+    amountUstx,
+    satsTotal: lockedSats,
+    signerManager,
+    outputs: [lockup],
+    poxInfo: pox,
+    ...ctx.net,
+  });
 
   const tx = await buildRegisterForBond({
     bondIndex: opts.bond,
@@ -199,27 +199,12 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
     ['lock tx', bitcoinTxLink(ctx.config, opts.btcTxid)],
     ['lock block', `Bitcoin block ${lockBlock.height} (${txids.length} txs, proof depth ${lockup.leafHashes.length})`],
     ['paired STX', `${stx(amountUstx)} (minimum ${stx(minUstx)})`],
-    ['allowlist cap', sats(allowance)],
+    ['allowlist cap', allowance === undefined ? 'not allowlisted' : sats(allowance)],
     ['fee', stx(opts.fee)],
     ['nonce', nonce],
   ];
 
-  const blockers: string[] = [];
-  if (tooLate) {
-    blockers.push(`bond ${opts.bond} already started at Bitcoin block ${startBurnHeight} (ERR_BOND_ALREADY_STARTED u43)`);
-  }
-  if (inPrepare) {
-    blockers.push('the chain is in the prepare phase — registration is rejected until the next reward phase (ERR_STAKE_IN_PREPARE_PHASE u47)');
-  }
-  if (signerInfo === undefined) {
-    blockers.push(`signer-manager ${signerManager} is not registered (ERR_SIGNER_NOT_FOUND u23) — run setup-signer`);
-  }
-  if (allowance < lockedSats) {
-    blockers.push(`allowlist cap is ${allowance} sats, below the ${lockedSats} sats lock (ERR_TOO_MUCH_SATS u10)`);
-  }
-  if (membership !== undefined && Math.abs(membership.bondIndex - opts.bond) < 6) {
-    blockers.push(`staker already holds an overlapping bond membership (bond ${membership.bondIndex}) (ERR_ALREADY_REGISTERED u9)`);
-  }
+  const blockers = eligibilityBlockers(eligibility);
 
   const json = {
     staker: sender,
@@ -232,7 +217,7 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
     lockedSats,
     amountUstx,
     minUstx,
-    allowanceSats: allowance,
+    allowanceSats: allowance ?? null,
     unlockHeight,
     unlockBytes: bytesToHex(unlockBytes),
     fee: opts.fee,

@@ -1,29 +1,28 @@
 import {
+  BOND_END_OFFSET_PERIODS,
   bondPeriodToBurnHeight,
   bondPeriodToRewardCycle,
+  bondPhaseRanges,
   buildSetupBond,
   buildUnlockScript,
+  fetchBondAdmin,
+  fetchEligibleSetupBond,
   fetchPoxInfo,
 } from '@stacks/bitcoin-staking';
 import { bytesToHex } from '@stacks/common';
 import {
-  cvToString,
-  deserializeCV,
   fetchNonce,
   getAddressFromPrivateKey,
   privateKeyToPublic,
   publicKeyToHex,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { CliError, eligibilityBlockers } from '../errors.js';
 import { resolveBondAdminPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
 import { requirePoxWithBondCycle } from '../pox.js';
 import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { bps, dim, output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
-
-const BOND_GAP_CYCLES = 2;
-const BOND_LENGTH_CYCLES = 12;
 
 export interface AllowEntry {
   staker: string;
@@ -61,23 +60,25 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
   const bitcoinHeight = pox.currentBurnchainBlockHeight;
   const startBurnHeight = bondPeriodToBurnHeight({ bondIndex: opts.bondIndex, poxInfo: pox });
   const firstRewardCycle = bondPeriodToRewardCycle({ bondIndex: opts.bondIndex, poxInfo: pox });
-  const unlockCycle = firstRewardCycle + BOND_LENGTH_CYCLES;
-  const windowOpenHeight = startBurnHeight - BOND_GAP_CYCLES * pox.rewardCycleLength;
-
-  const tooLate = bitcoinHeight >= startBurnHeight;
-  const tooSoon = bitcoinHeight < windowOpenHeight;
-  if (tooLate) {
-    throw new CliError(
-      `bond ${opts.bondIndex} can no longer be set up (ERR_CANNOT_SETUP_BOND_TOO_LATE u3): ` +
-        `its start height ${startBurnHeight} is at or below the current Bitcoin height ${bitcoinHeight}`,
-    );
-  }
-
-  const bondAdmin = await fetchBondAdmin(ctx);
-  const adminMismatch = bondAdmin !== undefined && bondAdmin !== sender;
+  const unlockCycle = bondPeriodToRewardCycle({
+    bondIndex: opts.bondIndex + BOND_END_OFFSET_PERIODS,
+    poxInfo: pox,
+  });
+  const windowOpenHeight = bondPhaseRanges({ bondIndex: opts.bondIndex, poxInfo: pox })[0]!.startBurnHeight;
 
   const totalAllowSats = opts.allowlist.reduce((sum, e) => sum + e.maxSats, 0n);
-  const nonce = await fetchNonce({ address: sender, ...ctx.net });
+  const [bondAdmin, nonce, eligibility] = await Promise.all([
+    fetchBondAdmin(ctx.net),
+    fetchNonce({ address: sender, ...ctx.net }),
+    fetchEligibleSetupBond({
+      bondIndex: opts.bondIndex,
+      allowlist: opts.allowlist,
+      caller: sender,
+      poxInfo: pox,
+      ...ctx.net,
+    }),
+  ]);
+  const blockers = eligibilityBlockers(eligibility);
 
   const tx = await buildSetupBond({
     bondIndex: opts.bondIndex,
@@ -94,7 +95,7 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
 
   const baseRows: Row[] = [
     ['sender', explorerLink(ctx.config, sender)],
-    ['bond admin', bondAdmin ? explorerLink(ctx.config, bondAdmin) : null],
+    ['bond admin', explorerLink(ctx.config, bondAdmin)],
     ['target rate', bps(opts.targetRateBps)],
     ['stx value ratio', `${opts.stxValueRatio} uSTX / 100 sats`],
     ['min stx ratio', bps(opts.minUstxRatioBps)],
@@ -113,7 +114,7 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
 
   const json = {
     sender,
-    bondAdmin: bondAdmin ?? null,
+    bondAdmin,
     bondIndex: opts.bondIndex,
     targetRateBps: opts.targetRateBps,
     stxValueRatio: opts.stxValueRatio,
@@ -128,6 +129,7 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
     windowOpenHeight,
     fee: opts.fee,
     nonce,
+    blockers,
   };
 
   if (!opts.broadcast) {
@@ -137,12 +139,7 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
       printAllowlist(ctx, opts.allowlist);
       printSection('Schedule');
       printRows(scheduleRows);
-      if (adminMismatch) {
-        printNote(`sender is not the bond admin (${bondAdmin}) — a broadcast would be rejected with ERR_UNAUTHORIZED (u1)`);
-      }
-      if (tooSoon) {
-        printNote(`setup window opens at Bitcoin height ${windowOpenHeight} (in ${windowOpenHeight - bitcoinHeight} blocks); a broadcast now would be rejected with ERR_CANNOT_SETUP_BOND_TOO_SOON (u2)`);
-      }
+      for (const blocker of blockers) printNote(blocker);
       if (earlyUnlockDefaulted) {
         printNote('early-unlock-bytes defaulted to the bond-admin key’s OP_CHECKSIG fragment (unlock-script) — pass --early-unlock-bytes to override');
       }
@@ -151,17 +148,8 @@ export async function setupBondCommand(ctx: Ctx, opts: SetupBondOpts): Promise<v
     return;
   }
 
-  if (adminMismatch) {
-    throw new CliError(
-      `sender ${sender} is not the bond admin ${bondAdmin} — setup-bond is gated on the admin (ERR_UNAUTHORIZED u1). ` +
-        'Set POX5_BOND_ADMIN_PRIVATE_KEY to the admin key.',
-    );
-  }
-  if (tooSoon) {
-    throw new CliError(
-      `bond ${opts.bondIndex} setup window has not opened (ERR_CANNOT_SETUP_BOND_TOO_SOON u2): ` +
-        `opens at Bitcoin height ${windowOpenHeight}, current is ${bitcoinHeight}`,
-    );
+  if (blockers.length > 0) {
+    throw new CliError(`setup-bond would be rejected: ${blockers.join('; ')}`);
   }
 
   const { txid, outcome } = await signAndConfirm(ctx, tx, privateKey);
@@ -191,24 +179,6 @@ function printAllowlist(ctx: Ctx, allowlist: AllowEntry[]): void {
 
 function windowStatus(bitcoinHeight: number, open: number, start: number): string {
   if (bitcoinHeight < open) return `opens at ${open} (in ${open - bitcoinHeight} blocks), closes before ${start}`;
+  if (bitcoinHeight >= start) return `closed at ${start} (${bitcoinHeight - start} blocks ago)`;
   return `open now, closes before ${start} (in ${start - bitcoinHeight} blocks)`;
-}
-
-async function fetchBondAdmin(ctx: Ctx): Promise<string | undefined> {
-  const boot = ctx.net.network.bootAddress;
-  const url = `${ctx.config.stacksApiUrl}/v2/data_var/${boot}/pox-5/bond-admin?proof=0`;
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch {
-    return undefined;
-  }
-  if (!res.ok) return undefined;
-  const { data } = (await res.json()) as { data?: string };
-  if (!data) return undefined;
-  try {
-    return cvToString(deserializeCV(data));
-  } catch {
-    return undefined;
-  }
 }

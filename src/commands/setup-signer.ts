@@ -1,5 +1,6 @@
 import {
   computeSignerGrantHash,
+  fetchEligibleGrantSignerKey,
   fetchSignerGrantMessageHash,
   fetchSignerInfo,
   signSignerGrant,
@@ -19,7 +20,7 @@ import {
   uintCV,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { CliError, eligibilityBlockers } from '../errors.js';
 import { resolveSignerPrivateKey, resolveStxPrivateKey } from '../address.js';
 import { explorerLink } from '../explorer.js';
 import { fetchSbtcContractId } from '../pox.js';
@@ -149,7 +150,19 @@ export async function setupSignerCommand(ctx: Ctx, opts: SetupSignerOpts): Promi
   const localHash = bytesToHex(computeSignerGrantHash(grantOpts));
   const hashMatch = localHash === onChainHash.replace(/^0x/, '');
   const signatureValid = verifySignerGrant({ ...grantOpts, publicKey: signerKey, signature });
-  if (!signatureValid) throw new CliError('signer-key grant signature failed local verification');
+  const eligibility = await fetchEligibleGrantSignerKey({
+    signerKey,
+    signerManager,
+    authId: opts.authId,
+    signerSignature: signature,
+    ...ctx.net,
+  });
+  const blockers = eligibilityBlockers(eligibility);
+  if (!hashMatch) {
+    blockers.push(
+      'the locally computed grant hash does not match pox-5 — check the configured chain id',
+    );
+  }
 
   const sbtcContractId = await fetchSbtcContractId(ctx);
   if (!sbtcContractId) {
@@ -214,25 +227,21 @@ export async function setupSignerCommand(ctx: Ctx, opts: SetupSignerOpts): Promi
     deployFee: deployed ? null : opts.deployFee,
     fee: opts.fee,
     nonce,
+    blockers,
   };
 
   if (!opts.broadcast) {
     output(ctx, { mode: 'dry-run', ...json }, () => {
       printSection(`Setup signer — ${opts.name} (dry run)`);
       printRows(baseRows);
-      if (!hashMatch) {
-        printNote('the locally computed grant hash does not match pox-5 — check --chain-id; a broadcast would fail signature recovery');
-      }
+      for (const blocker of blockers) printNote(blocker);
       printNote('re-run with --broadcast to sign with POX5_STX_PRIVATE_KEY and send');
     });
     return;
   }
 
-  if (!hashMatch) {
-    throw new CliError(
-      'locally computed grant hash does not match the pox-5 get-signer-grant-message-hash read-only — ' +
-        'the grant signature would fail recovery (check the configured chain id)',
-    );
+  if (blockers.length > 0) {
+    throw new CliError(`signer registration would be rejected: ${blockers.join('; ')}`);
   }
 
   // Deploy, wait for it to confirm, then register-self — see deployThenCall.

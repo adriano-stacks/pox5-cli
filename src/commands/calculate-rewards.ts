@@ -1,11 +1,11 @@
 import {
+  BOND_END_OFFSET_PERIODS,
   buildCalculateRewards,
   burnHeightToRewardCycle,
   currentDistributionCycle,
   distributionCycleToBurnHeight,
+  fetchEligibleCalculateRewards,
   fetchPoxInfo,
-  fetchProtocolBond,
-  type Bond,
 } from '@stacks/bitcoin-staking';
 import {
   fetchNonce,
@@ -14,7 +14,7 @@ import {
   publicKeyToHex,
 } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
-import { CliError } from '../errors.js';
+import { CliError, eligibilityBlockers } from '../errors.js';
 import { resolveStxPrivateKey } from '../address.js';
 import { explorerLink, explorerTxLink } from '../explorer.js';
 import { fetchRewardsState } from '../pox.js';
@@ -23,7 +23,6 @@ import { signAndConfirm, txStatusLabel } from '../tx.js';
 import { bps, output, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 
 const RESERVE_RATIO_BPS = 1500;
-const MAX_BOND_PERIODS = 6;
 
 export interface CalculateRewardsOpts {
   bonds: number[];
@@ -32,8 +31,8 @@ export interface CalculateRewardsOpts {
 }
 
 export async function calculateRewardsCommand(ctx: Ctx, opts: CalculateRewardsOpts): Promise<void> {
-  if (opts.bonds.length > MAX_BOND_PERIODS) {
-    throw new CliError(`at most ${MAX_BOND_PERIODS} bonds can be passed (got ${opts.bonds.length})`);
+  if (opts.bonds.length > BOND_END_OFFSET_PERIODS) {
+    throw new CliError(`at most ${BOND_END_OFFSET_PERIODS} bonds can be passed (got ${opts.bonds.length})`);
   }
 
   const privateKey = resolveStxPrivateKey();
@@ -47,19 +46,17 @@ export async function calculateRewardsCommand(ctx: Ctx, opts: CalculateRewardsOp
 
   const autoDiscovered = opts.bonds.length === 0;
   let bonds: number[];
-  let configs: (Bond | undefined)[];
   if (autoDiscovered) {
     const active = await discoverActiveBonds(ctx, pox, calcHeight);
     bonds = active.map((a) => a.index);
-    configs = active.map((a) => a.config);
   } else {
     bonds = opts.bonds;
-    configs = await Promise.all(bonds.map((i) => fetchProtocolBond({ bondIndex: i, ...ctx.net })));
   }
 
-  const [state, nonce] = await Promise.all([
+  const [state, nonce, eligibility] = await Promise.all([
     fetchRewardsState(ctx),
     fetchNonce({ address: sender, ...ctx.net }),
+    fetchEligibleCalculateRewards({ bondIndices: bonds, poxInfo: pox, ...ctx.net }),
   ]);
 
   const tx = await buildCalculateRewards({
@@ -72,34 +69,9 @@ export async function calculateRewardsCommand(ctx: Ctx, opts: CalculateRewardsOp
 
   const reserveCutMax = (state.newRewards * BigInt(RESERVE_RATIO_BPS)) / 10000n;
 
-  const blockers: string[] = [];
-  if (calcHeight <= state.lastComputeHeight) {
-    blockers.push(
-      `distribution height ${calcHeight} was already settled (last compute height ${state.lastComputeHeight}) — ` +
-        'ERR_DISTRIBUTION_ALREADY_COMPUTED (u30); wait for the next distribution cycle',
-    );
-  }
+  const blockers = eligibilityBlockers(eligibility);
   if (state.newRewards === 0n) {
     blockers.push('no new sBTC has arrived since the last distribution — nothing to settle (fund the contract with faucet sbtc)');
-  }
-  const missing = bonds.filter((_i, idx) => configs[idx] === undefined);
-  if (missing.length > 0) {
-    blockers.push(`bond(s) ${missing.join(', ')} are not configured (ERR_BOND_NOT_FOUND u7)`);
-  }
-  const present = configs.filter((c): c is Bond => c !== undefined);
-  for (let i = 1; i < present.length; i++) {
-    const prev = present[i - 1]!;
-    const cur = present[i]!;
-    const ordered =
-      prev.stxValueRatio > cur.stxValueRatio ||
-      (prev.stxValueRatio === cur.stxValueRatio && prev.bondIndex < cur.bondIndex);
-    if (!ordered) {
-      blockers.push(
-        `bonds out of order at position ${i} (bond ${cur.bondIndex} after bond ${prev.bondIndex}) — ` +
-          'must be descending stx-value-ratio, ascending index (ERR_INVALID_BOND_PERIOD_ORDERING u29)',
-      );
-      break;
-    }
   }
 
   const bondsLabel = bonds.length

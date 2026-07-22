@@ -151,7 +151,7 @@ program
 
 program
   .command('schedule')
-  .description('phase timeline (announced/open/active/re-lock/closed) for a bond')
+  .description('phase timeline (announced/open/locked/unlocked/finished) for a bond')
   .argument('<index>', 'bond index', intArg('index'))
   .action(async (index, _o, cmd) => scheduleCommand(ctxOf(cmd), index));
 
