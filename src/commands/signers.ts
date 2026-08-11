@@ -25,6 +25,7 @@ import {
   stx,
   type Row,
 } from '../output.js';
+import { fetchIndexedSigners, fetchIndexedSignerStakers } from '../staking-api.js';
 
 export interface SignersOpts {
   staker: string[];
@@ -51,11 +52,6 @@ interface ContractEvent {
 }
 interface EventsResponse {
   results: ContractEvent[];
-}
-
-interface SignerRegistryResponse {
-  cursor: { next: string | null };
-  results: { signer: string; signer_key: string }[];
 }
 
 const EVENT_PAGE_SIZE = 50;
@@ -89,7 +85,7 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
       if (opts.staker.length > 0) {
         other = attachStakers(signers, await resolveStakers(ctx, opts.staker, cycle));
       } else {
-        const discovered = await discoverStakers(ctx, cycle);
+        const discovered = await discoverStakers(ctx, cycle, signers, cycle >= pox.rewardCycleId);
         truncated = discovered.truncated;
         other = attachStakers(signers, discovered.entries);
       }
@@ -165,7 +161,10 @@ async function collectSignerSet(ctx: Ctx, cycle: number): Promise<SignerEntry[]>
   const seen = new Set<string>();
   try {
     progress('reading the signer registry…');
-    const signerKeys = await fetchSignerKeys(ctx);
+    const indexedSigners = await fetchIndexedSigners(ctx);
+    const signerKeys = indexedSigners === undefined
+      ? undefined
+      : new Map(indexedSigners.map((item) => [item.signer, item.signer_key.replace(/^0x/, '')]));
     progress(`reading the signer set for cycle ${cycle}…`);
     let signer = await fetchSignerSetFirstItem({ rewardCycle: cycle, ...ctx.net });
 
@@ -199,33 +198,30 @@ async function collectSignerSet(ctx: Ctx, cycle: number): Promise<SignerEntry[]>
   }
 }
 
-async function fetchSignerKeys(ctx: Ctx): Promise<Map<string, string> | undefined> {
-  const keys = new Map<string, string>();
-  let cursor: string | undefined;
-
-  try {
-    for (;;) {
-      const params = new URLSearchParams({ limit: '250' });
-      if (cursor !== undefined) params.set('cursor', cursor);
-      const res = await fetch(`${ctx.config.extendedApiUrl}/v3/staking/signers?${params.toString()}`);
-      if (!res.ok) return undefined;
-
-      const page = (await res.json()) as SignerRegistryResponse;
-      for (const item of page.results) {
-        keys.set(item.signer, item.signer_key.replace(/^0x/, ''));
-      }
-
-      const next = page.cursor.next;
-      if (next === null || next === cursor) return keys;
-      cursor = next;
-    }
-  } catch {
-    return undefined;
+async function discoverStakers(
+  ctx: Ctx,
+  cycle: number,
+  signers: SignerEntry[],
+  useIndex: boolean,
+): Promise<{ entries: StakerEntry[]; truncated: boolean }> {
+  let signersRead = 0;
+  const indexed = useIndex
+    ? await mapLimit(signers, RESOLVE_CONCURRENCY, async (signer) => {
+        progress(`reading signer stakers… ${++signersRead}/${signers.length}`);
+        return fetchIndexedSignerStakers(ctx, signer.signerManager);
+      })
+    : [];
+  const indexedComplete = useIndex && indexed.every((items) => items !== undefined);
+  let principals: string[];
+  let truncated: boolean;
+  if (indexedComplete) {
+    principals = [...new Set(indexed.flatMap((items) => items!.map((item) => item.staker)))];
+    truncated = false;
+  } else {
+    const scan = await stakerPrincipalsFromEvents(ctx);
+    principals = scan.principals;
+    truncated = scan.truncated;
   }
-}
-
-async function discoverStakers(ctx: Ctx, cycle: number): Promise<{ entries: StakerEntry[]; truncated: boolean }> {
-  const { principals, truncated } = await stakerPrincipalsFromEvents(ctx);
   const resolved = await resolveStakers(ctx, principals, cycle);
   return { entries: resolved.filter((e) => e.signer !== null), truncated };
 }

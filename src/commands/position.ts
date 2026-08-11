@@ -12,6 +12,14 @@ import { CliError } from '../errors.js';
 import { explorerLink } from '../explorer.js';
 import { fetchSbtcBalance } from '../pox.js';
 import { output, printNote, printRows, printSection, sats, sbtc, stx, type Row } from '../output.js';
+import {
+  fetchIndexedBondPositions,
+  fetchIndexedFtBalance,
+  fetchIndexedNonce,
+  fetchIndexedStxBalance,
+  fetchIndexedStakingSummary,
+  type IndexedBondPosition,
+} from '../staking-api.js';
 
 const EVENT_PAGE_SIZE = 50;
 const EVENT_MAX_PAGES = 100;
@@ -32,17 +40,42 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
       ? ctx.config.btcAddress
       : undefined;
 
-  const [pox, account, staker, bond, sbtcBalance, btcSats] = await Promise.all([
+  const [pox, indexedAccount, indexedNonce, staker, bond, stakingSummary, indexedBonds, btcSats] = await Promise.all([
     fetchPoxInfo(ctx.net),
-    fetchAccountStatus({ address, ...ctx.net }),
+    fetchIndexedStxBalance(ctx, address),
+    fetchIndexedNonce(ctx, address),
     fetchStakerInfo({ address, ...ctx.net }),
     fetchBondMembership({ address, ...ctx.net }),
-    fetchSbtcBalance(ctx, address),
+    fetchIndexedStakingSummary(ctx, address),
+    fetchIndexedBondPositions(ctx, address),
     btcAddress ? fetchBtcBalanceSats(ctx.config, btcAddress) : Promise.resolve(undefined),
   ]);
 
-  const liquid = account.balance - account.locked;
-  const bondPosition = bond ? await scanStakerBondPosition(ctx, bond.bondIndex, address) : undefined;
+  const sbtcContractId = pox.sbtcContract;
+  const indexedSbtcBalance = sbtcContractId
+    ? await fetchIndexedFtBalance(ctx, address, `${sbtcContractId}::sbtc-token`)
+    : undefined;
+  const sbtcBalance = indexedSbtcBalance === undefined
+    ? await fetchSbtcBalance(ctx, address)
+    : { contractId: sbtcContractId, balance: indexedSbtcBalance };
+  const coreAccount = indexedAccount === undefined || indexedNonce === undefined
+    ? await fetchAccountStatus({ address, ...ctx.net })
+    : undefined;
+  const account = indexedAccount && indexedNonce !== undefined
+    ? {
+        balance: BigInt(indexedAccount.balance),
+        locked: BigInt(indexedAccount.locked?.amount ?? 0),
+        unlockHeight: indexedAccount.locked?.burn_unlock_height ?? 0,
+        nonce: indexedNonce,
+      }
+    : coreAccount!;
+  const liquid = indexedAccount ? BigInt(indexedAccount.available) : account.balance - account.locked;
+  const indexedBond = bond ? indexedBonds?.find((item) => item.bond_index === bond.bondIndex) : undefined;
+  const bondPosition = bond
+    ? indexedBond
+      ? positionFromIndex(indexedBond, bond.isL1Lock)
+      : await scanStakerBondPosition(ctx, bond.bondIndex, address)
+    : undefined;
 
   output(
     ctx,
@@ -59,6 +92,7 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
       sbtc: sbtcBalance ? { contractId: sbtcBalance.contractId, balanceSats: sbtcBalance.balance } : null,
       btc: btcAddress ? { address: btcAddress, balanceSats: btcSats ?? null } : null,
       stxOnly: staker.staked ? staker.details : null,
+      stakingRewards: stakingSummary?.stx.rewards.btc ?? null,
       bond: bond
         ? {
             ...bond,
@@ -66,6 +100,7 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
             lockedSats: bondPosition?.lockedSats ?? null,
             earlyExitedSats: bondPosition?.earlyExitedSats ?? null,
             unstakedSats: bondPosition?.unstakedSats ?? null,
+            rewards: indexedBond?.rewards.btc ?? null,
           }
         : null,
     },
@@ -85,12 +120,17 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
       printSection('STX-only stake');
       if (staker.staked) {
         const d = staker.details;
-        printRows([
+        const rows: Row[] = [
           ['amount', stx(d.amountUstx)],
           ['first reward cycle', d.firstRewardCycle],
           ['num cycles', d.numCycles],
           ['signer-manager', explorerLink(ctx.config, d.signer)],
-        ]);
+        ];
+        if (stakingSummary) {
+          rows.push(['rewards claimable', sats(BigInt(stakingSummary.stx.rewards.btc.claimable))]);
+          rows.push(['rewards claimed', sats(BigInt(stakingSummary.stx.rewards.btc.claimed))]);
+        }
+        printRows(rows);
       } else {
         printRows([['status', 'none']]);
       }
@@ -108,6 +148,10 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
         }
         rows.push(['signer-manager', explorerLink(ctx.config, bond.signer)]);
         rows.push(['lock type', bond.isL1Lock ? 'native BTC (L1 timelock)' : 'sBTC (L2)']);
+        if (indexedBond) {
+          rows.push(['rewards claimable', sats(BigInt(indexedBond.rewards.btc.claimable))]);
+          rows.push(['rewards claimed', sats(BigInt(indexedBond.rewards.btc.claimed))]);
+        }
         printRows(rows);
         if (bondPosition?.truncated) {
           printNote(`event scan stopped at ${EVENT_MAX_PAGES * EVENT_PAGE_SIZE} events — locked amount may be incomplete`);
@@ -117,6 +161,20 @@ export async function positionCommand(ctx: Ctx, addressArg?: string): Promise<vo
       }
     },
   );
+}
+
+function positionFromIndex(position: IndexedBondPosition, isL1: boolean): StakerBondPosition {
+  const registeredSats = BigInt(position.enrollment.btc_lockup.amount);
+  const lockedSats = BigInt(position.locked.btc);
+  const released = registeredSats > lockedSats ? registeredSats - lockedSats : 0n;
+  return {
+    registeredSats,
+    lockedSats,
+    earlyExitedSats: isL1 ? released : 0n,
+    unstakedSats: isL1 ? 0n : released,
+    isL1,
+    truncated: false,
+  };
 }
 
 async function scanStakerBondPosition(

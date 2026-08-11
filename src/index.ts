@@ -138,7 +138,7 @@ program
 
 program
   .command('bonds')
-  .description('list every bond set up on the contract (discovered from contract events)')
+  .description('list all configured bonds')
   .action(async (_o, cmd) => bondsCommand(ctxOf(cmd)));
 
 program
@@ -146,7 +146,7 @@ program
   .description('a bond’s parameters, fill, and (if derivable) schedule')
   .argument('<index>', 'bond index', intArg('index'))
   .option('--address <addr>', 'show allocation + filled for these principals (repeatable, comma-separated; default: POX5_STX_ADDRESS)', collectList)
-  .option('--allowlist', 'list the full allowlist + capacity (queries contract events)')
+  .option('--allowlist', 'list the full allowlist and capacity')
   .action(async (index, o, cmd) => bondCommand(ctxOf(cmd), index, { addresses: o.address ?? [], allowlist: o.allowlist === true }));
 
 program
@@ -242,7 +242,7 @@ program
   .command('signers')
   .description('a cycle’s signer set and who controls each signer (add --stakers to also list delegating stakers)')
   .argument('[cycle]', 'reward cycle (default: current)', intArg('cycle'))
-  .option('--stakers', 'also list the stakers delegating to each signer (queries contract events)')
+  .option('--stakers', 'also list the stakers that delegate to each signer')
   .option(
     '--staker <addr>',
     'list only these stakers (repeatable, comma-separated); implies --stakers for the named addresses',

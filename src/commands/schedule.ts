@@ -10,6 +10,7 @@ import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/tran
 import type { Ctx } from '../context.js';
 import { requirePoxWithBondCycle } from '../pox.js';
 import { bitcoinBlocks, bold, output, printNote, printRows, printSection } from '../output.js';
+import { fetchIndexedBond } from '../staking-api.js';
 
 const EVENT_PAGE_SIZE = 50;
 const EVENT_MAX_PAGES = 100;
@@ -29,14 +30,17 @@ export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void
   const ranges = bondPhaseRanges({ bondIndex, poxInfo: pox });
   const setupWindowOpen = ranges[0]!.startBurnHeight;
 
-  const [l1Unlock, announced, bond] = await Promise.all([
-    fetchBondL1UnlockHeight({ bondIndex, ...ctx.net }),
-    fetchAnnouncementHeight(ctx, bondIndex),
-    fetchProtocolBond({ bondIndex, ...ctx.net }),
-  ]);
-  const currentPhase = bondStatus({ bondIndex, poxInfo: pox, isBondSetup: bond !== undefined });
+  const indexed = await fetchIndexedBond(ctx, bondIndex);
+  const [l1Unlock, announced, isBondSetup] = indexed
+    ? [BigInt(indexed.schedule.unlock.bitcoin_height), indexed.transaction?.bitcoin_block.height, true] as const
+    : await Promise.all([
+        fetchBondL1UnlockHeight({ bondIndex, ...ctx.net }),
+        fetchAnnouncementHeight(ctx, bondIndex),
+        fetchProtocolBond({ bondIndex, ...ctx.net }).then((bond) => bond !== undefined),
+      ]);
+  const currentPhase = bondStatus({ bondIndex, poxInfo: pox, isBondSetup });
   const active =
-    bond !== undefined && isBondActiveAtHeight({ bondIndex, burnHeight: now, poxInfo: pox });
+    isBondSetup && isBondActiveAtHeight({ bondIndex, burnHeight: now, poxInfo: pox });
   const announceHeight = announced ?? setupWindowOpen;
 
   const defs: PhaseDef[] = [

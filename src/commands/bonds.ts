@@ -2,6 +2,7 @@ import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/tran
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { dim, output, printNote, printSection } from '../output.js';
+import { fetchIndexedBonds } from '../staking-api.js';
 
 const EVENT_PAGE_SIZE = 50;
 const EVENT_MAX_PAGES = 100;
@@ -16,7 +17,22 @@ interface BondRecord {
 }
 
 export async function bondsCommand(ctx: Ctx): Promise<void> {
-  const { bonds, truncated } = await scanSetupBondEvents(ctx);
+  const indexed = await fetchIndexedBonds(ctx);
+  const { bonds, truncated } = indexed
+    ? {
+        bonds: indexed
+          .map((bond): BondRecord => ({
+            bondIndex: bond.index,
+            firstRewardCycle: bond.schedule.activation.pox_cycle,
+            bondStartHeight: bond.schedule.activation.bitcoin_height,
+            targetRateBps: bond.parameters.target_rate_bps,
+            stxValueRatio: BigInt(bond.parameters.stx_value_ratio),
+            minUstxRatioBps: Number(bond.parameters.minimum_stx_ratio),
+          }))
+          .sort((a, b) => a.bondIndex - b.bondIndex),
+        truncated: false,
+      }
+    : await scanSetupBondEvents(ctx);
 
   output(
     ctx,

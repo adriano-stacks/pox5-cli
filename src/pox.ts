@@ -2,6 +2,7 @@ import {
   fetchLastAccountedRewards,
   fetchLastRewardComputeHeight,
   fetchNewRewards,
+  fetchPoxInfo,
   fetchReserveBalance,
   fetchRewards,
   firstPox5RewardCycle,
@@ -36,12 +37,7 @@ export function callPoxReadOnly(
 
 export async function fetchSbtcContractId(ctx: Ctx): Promise<string | undefined> {
   try {
-    const res = await fetch(
-      `${ctx.config.stacksApiUrl}/v2/contracts/source/${ctx.net.network.bootAddress}/pox-5?proof=0`,
-    );
-    if (!res.ok) return undefined;
-    const src = ((await res.json()) as { source?: string }).source;
-    return src?.match(/'(S[0-9A-Z]+\.sbtc-token)/)?.[1];
+    return (await fetchPoxInfo(ctx.net)).sbtcContract;
   } catch {
     return undefined;
   }

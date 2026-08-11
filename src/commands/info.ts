@@ -1,17 +1,17 @@
 import { currentDistributionCycle, fetchPoxInfo, isInPreparePhase } from '@stacks/bitcoin-staking';
 import type { Ctx } from '../context.js';
-import { callPoxReadOnly, fetchSbtcContractId, resolveFirstPox5Cycle } from '../pox.js';
+import { callPoxReadOnly, resolveFirstPox5Cycle } from '../pox.js';
 import { explorerLink } from '../explorer.js';
 import { bitcoinBlocks, dim, link, output, printRows, printSection, stx, type Row } from '../output.js';
 
 export async function infoCommand(ctx: Ctx): Promise<void> {
-  const [pox, poxRead, nextCycle, bitcoinBlockSeconds, sbtcContract] = await Promise.all([
+  const [pox, poxRead, nextCycle, bitcoinBlockSeconds] = await Promise.all([
     fetchPoxInfo(ctx.net),
     callPoxReadOnly(ctx, 'get-pox-info', []),
     fetchNextCycleBlocks(ctx),
     estimateBitcoinBlockSeconds(ctx),
-    fetchSbtcContractId(ctx),
   ]);
+  const sbtcContract = pox.sbtcContract;
   const stakingMinUstx = (poxRead as { value: { value: Record<string, { value: bigint }> } }).value.value[
     'min-amount-ustx'
   ]!.value;
