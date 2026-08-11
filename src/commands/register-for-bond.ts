@@ -171,9 +171,8 @@ export async function registerForBondCommand(ctx: Ctx, opts: RegisterForBondOpts
     bondIndex: opts.bond,
     staker: sender,
     amountUstx,
-    satsTotal: lockedSats,
     signerManager,
-    outputs: [lockup],
+    lockup: { kind: 'btc', outputs: [lockup], unlockBytes },
     poxInfo: pox,
     ...ctx.net,
   });

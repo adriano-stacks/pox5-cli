@@ -35,7 +35,7 @@ export async function stakeCommand(ctx: Ctx, opts: StakeOpts): Promise<void> {
   const bitcoinHeight = pox.currentBurnchainBlockHeight;
   const startBurnHt = opts.startHeight ?? bitcoinHeight;
   const firstRewardCycle = pox.rewardCycleId + 1;
-  const firstCycleStartHeight = rewardCycleToBurnHeight({ cycle: firstRewardCycle, poxInfo: pox });
+  const firstCycleStartHeight = rewardCycleToBurnHeight({ rewardCycle: firstRewardCycle, poxInfo: pox });
   const [nonce, eligibility] = await Promise.all([
     fetchNonce({ address: sender, ...ctx.net }),
     fetchEligibleStake({

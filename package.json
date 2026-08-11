@@ -2,7 +2,7 @@
   "name": "pox5-cli",
   "version": "0.1.0",
   "private": true,
-  "description": "CLI for the Stacks PoX-5 (Bitcoin Staking) internal testnet",
+  "description": "CLI for Stacks PoX-5 (Bitcoin Staking)",
   "type": "module",
   "packageManager": "pnpm@11.5.2",
   "engines": {
@@ -27,10 +27,10 @@
   },
   "dependencies": {
     "@scure/btc-signer": "^2.0.1",
-    "@stacks/bitcoin-staking": "7.5.1-pr.1854.0",
-    "@stacks/common": "7.5.1-pr.1854.0",
-    "@stacks/network": "7.5.1-pr.1854.0",
-    "@stacks/transactions": "7.5.1-pr.1854.0",
+    "@stacks/bitcoin-staking": "7.6.0",
+    "@stacks/common": "7.6.0",
+    "@stacks/network": "7.6.0",
+    "@stacks/transactions": "7.6.0",
     "commander": "^12.1.0",
     "dotenv": "^16.4.7"
   },

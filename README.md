@@ -45,18 +45,22 @@ output) and the connection overrides that mirror the
 
 ## Configuration
 
-Defaults target the `testnet-pox5.hiro.so` testnet and need no config. To
-override, copy `.env.example` to `.env`. CLI flags override env which overrides
-built-in defaults.
+The default configuration uses Stacks mainnet. To use a different network, copy
+`.env.example` to `.env`. CLI options override environment variables.
+Environment variables override the default values.
 
-Key values for `testnet-pox5`:
+Mainnet values:
 
-- Stacks RPC: `https://api.testnet-pox5.hiro.so` (the SDK hits `/v2/*` at the
+- Stacks RPC: `https://api.mainnet.hiro.so` (the SDK hits `/v2/*` at the
   host root)
-- Extended API (faucets): `https://api.testnet-pox5.hiro.so/extended`
-- Bitcoin (Esplora): `https://mempool.testnet-pox5.hiro.so/api`
-- pox-5 contract: `ST000000000000000000002AMW42H.pox-5`
-- chain id: `2147483653` (`0x80000005`)
+- Extended API: `https://api.mainnet.hiro.so/extended`
+- Bitcoin (Esplora): `https://mempool.space/api`
+- pox-5 contract: `SP000000000000000000002Q6VF78.pox-5`
+- chain id: `1` (`0x00000001`)
+- PoX-5 activation: Bitcoin block `960230`, first reward cycle `141`
+
+The `faucet` commands do not operate on mainnet. Configure a testnet or devnet
+before you use these commands.
 
 ## Development
 

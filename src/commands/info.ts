@@ -94,11 +94,17 @@ export async function infoCommand(ctx: Ctx): Promise<void> {
         ['staking minimum', stx(stakingMinUstx)],
       ]);
 
-      const cycleRows = (label: string, c: typeof pox.currentCycle): Row[] => [
-        [`${label} id`, c.id],
-        [`${label} staked`, stx(c.stakedUstx)],
-        [`${label} pox active`, c.isPoxActive],
-      ];
+      const cycleRows = (
+        label: string,
+        c: { id: number; stakedUstx: bigint; isPoxActive?: boolean },
+      ): Row[] => {
+        const rows: Row[] = [
+          [`${label} id`, c.id],
+          [`${label} staked`, stx(c.stakedUstx)],
+        ];
+        if (c.isPoxActive !== undefined) rows.push([`${label} pox active`, c.isPoxActive]);
+        return rows;
+      };
       printSection('Cycles');
       printRows([...cycleRows('current', pox.currentCycle), ...cycleRows('next', pox.nextCycle)]);
     },

@@ -151,7 +151,7 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
 async function collectSignerSet(ctx: Ctx, cycle: number): Promise<SignerEntry[]> {
   const entries: SignerEntry[] = [];
   const seen = new Set<string>();
-  let signer = await fetchSignerSetFirstItem({ cycle, ...ctx.net });
+  let signer = await fetchSignerSetFirstItem({ rewardCycle: cycle, ...ctx.net });
 
   while (signer) {
     const principal = signer;
@@ -159,10 +159,10 @@ async function collectSignerSet(ctx: Ctx, cycle: number): Promise<SignerEntry[]>
     seen.add(principal);
 
     const [delegatedUstx, info, shares, next] = await Promise.all([
-      fetchAmountDelegatedForSigner({ signerManager: principal, cycle, ...ctx.net }),
+      fetchAmountDelegatedForSigner({ signerManager: principal, rewardCycle: cycle, ...ctx.net }),
       fetchSignerInfo({ signerManager: principal, ...ctx.net }),
       fetchSignerSharesStakedForCycle({ signerManager: principal, rewardCycle: cycle, ...ctx.net }),
-      fetchSignerSetNextItem({ signer: principal, cycle, ...ctx.net }),
+      fetchSignerSetNextItem({ signer: principal, rewardCycle: cycle, ...ctx.net }),
     ]);
 
     entries.push({
@@ -228,7 +228,7 @@ function stakerFromEventHex(hex: string | undefined): string | undefined {
 }
 
 async function resolveStaker(ctx: Ctx, staker: string, cycle: number): Promise<StakerEntry> {
-  const membership = await fetchSignerCycleMembership({ staker, cycle, ...ctx.net });
+  const membership = await fetchSignerCycleMembership({ staker, rewardCycle: cycle, ...ctx.net });
   if (!membership) return { staker, signer: null, amountUstx: null };
   return {
     staker,

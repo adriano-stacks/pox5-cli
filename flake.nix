@@ -61,7 +61,7 @@
             '';
 
             meta = {
-              description = "CLI for the Stacks PoX-5 (Bitcoin Staking) internal testnet";
+              description = "CLI for Stacks PoX-5 (Bitcoin Staking)";
               mainProgram = "pox5";
               platforms = systems;
             };

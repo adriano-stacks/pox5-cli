@@ -7,14 +7,14 @@ import {
 import { CliError } from './errors.js';
 
 const DEFAULTS = {
-  stacksApiUrl: 'https://api.testnet-pox5.hiro.so',
-  extendedApiUrl: 'https://api.testnet-pox5.hiro.so/extended',
-  bitcoinApiUrl: 'https://mempool.testnet-pox5.hiro.so/api',
+  stacksApiUrl: 'https://api.mainnet.hiro.so',
+  extendedApiUrl: 'https://api.mainnet.hiro.so/extended',
+  bitcoinApiUrl: 'https://mempool.space/api',
   explorerUrl: 'https://explorer.hiro.so',
   explorerChain: 'mainnet',
-  chainId: 0x80000005,
-  bootAddress: 'ST000000000000000000002AMW42H',
-  networkBase: 'testnet' as const,
+  chainId: 0x00000001,
+  bootAddress: 'SP000000000000000000002Q6VF78',
+  networkBase: 'mainnet' as const,
 };
 
 export interface CliOverrides {

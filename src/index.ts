@@ -109,11 +109,11 @@ const program = new Command();
 
 program
   .name('pox5')
-  .description('CLI for the Stacks PoX-5 (Bitcoin Staking) internal testnet')
+  .description('CLI for Stacks PoX-5 (Bitcoin Staking)')
   .version('0.1.0')
   .option('--json', 'output machine-readable JSON')
   .option('--api-url <url>', 'Stacks core-node RPC base URL')
-  .option('--extended-url <url>', 'Hiro Extended API base URL (faucets)')
+  .option('--extended-url <url>', 'Hiro Extended API base URL')
   .option('--bitcoin-url <url>', 'Esplora-compatible Bitcoin API base URL')
   .option('--explorer-url <url>', 'Stacks explorer base URL for clickable links')
   .option('--boot-address <addr>', 'pox-5 boot-contract deploy address')
@@ -456,7 +456,7 @@ program
     }),
   );
 
-const faucet = program.command('faucet').description('request testnet funds from the faucets');
+const faucet = program.command('faucet').description('faucet tools for development networks');
 faucet
   .command('stx')
   .description('request testnet STX (default: POX5_STX_ADDRESS)')

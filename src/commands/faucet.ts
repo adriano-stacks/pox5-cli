@@ -34,11 +34,20 @@ async function postFaucet(url: string): Promise<Record<string, unknown>> {
   }
 }
 
+function requireNonMainnet(ctx: Ctx): void {
+  if (ctx.config.network.transactionVersion === 0) {
+    throw new CliError(
+      'faucet commands do not operate on mainnet — configure a testnet or devnet',
+    );
+  }
+}
+
 export interface FaucetStxOpts {
   stacking?: boolean;
 }
 
 export async function faucetStxCommand(ctx: Ctx, addressArg?: string, opts: FaucetStxOpts = {}): Promise<void> {
+  requireNonMainnet(ctx);
   const address = resolveStxAddress(ctx, addressArg);
   const params = new URLSearchParams({ address });
   if (opts.stacking) params.set('stacking', 'true');
@@ -61,6 +70,7 @@ export interface FaucetBtcOpts {
 }
 
 export async function faucetBtcCommand(ctx: Ctx, addressArg: string | undefined, opts: FaucetBtcOpts): Promise<void> {
+  requireNonMainnet(ctx);
   const address = resolveBtcAddress(ctx, addressArg);
   const params = new URLSearchParams({ address });
   if (opts.xlarge) params.set('xlarge', 'true');
@@ -114,6 +124,7 @@ export interface FaucetSbtcOpts {
 }
 
 export async function faucetSbtcCommand(ctx: Ctx, addressArg: string | undefined, opts: FaucetSbtcOpts): Promise<void> {
+  requireNonMainnet(ctx);
   let amountSats: bigint;
   if (opts.sats !== undefined) amountSats = opts.sats;
   else if (opts.sbtc !== undefined) amountSats = BigInt(Math.round(opts.sbtc * 1e8));
