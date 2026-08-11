@@ -62,6 +62,10 @@ Mainnet values:
 The `faucet` commands do not operate on mainnet. Configure a testnet or devnet
 before you use these commands.
 
+The CLI uses indexed staking endpoints when they are available. Some commands
+must also read contract state. If the API returns status 429, the CLI waits for
+the quota reset and tries the request again.
+
 ## Development
 
 `nix develop` (or `direnv`, via `.envrc`) drops you into a shell with Node,
