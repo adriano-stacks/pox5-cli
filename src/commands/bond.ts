@@ -98,6 +98,10 @@ interface AllowlistEntry {
   maxSats: bigint;
 }
 
+interface AllowlistEntryWithFill extends AllowlistEntry {
+  filledSats: bigint;
+}
+
 interface FillBreakdown {
   btcSats: bigint;
   sbtcSats: bigint;
@@ -148,7 +152,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
     }),
   );
 
-  let allowlist: AllowlistEntry[] | undefined;
+  let allowlist: AllowlistEntryWithFill[] | undefined;
   let allowlistTruncated = false;
   let capacitySats: bigint | undefined;
   if (opts.allowlist) {
@@ -159,7 +163,10 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
           truncated: false,
         }
       : await scanBondAllowlist(ctx, bondIndex);
-    allowlist = scan.entries;
+    allowlist = scan.entries.map((entry) => ({
+      ...entry,
+      filledSats: fill.byStaker.get(entry.staker)?.sats ?? 0n,
+    }));
     allowlistTruncated = scan.truncated;
     capacitySats = indexedBond
       ? BigInt(indexedBond.parameters.btc_capacity)
@@ -265,7 +272,10 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
           printNote('no allowlist entries found in this contract’s events');
         } else {
           for (const e of allowlist) {
-            process.stdout.write(`  ${dim('•')} ${explorerLink(ctx.config, e.staker)} ${dim('→')} ${sats(e.maxSats)}\n`);
+            const filled = e.filledSats > 0n
+              ? ` ${dim('—')} ${sats(e.filledSats)} filled (${percent(e.filledSats, e.maxSats)} of allocation)`
+              : '';
+            process.stdout.write(`  ${dim('•')} ${explorerLink(ctx.config, e.staker)} ${dim('→')} ${sats(e.maxSats)}${filled}\n`);
           }
         }
         if (allowlistTruncated) {
