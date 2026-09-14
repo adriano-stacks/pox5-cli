@@ -19,12 +19,14 @@ import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
 import { explorerLink } from '../explorer.js';
 import { resolveFirstPox5Cycle, withFirstPox5Cycle } from '../pox.js';
-import { bitcoinBlocks, bps, dim, output, percent, printNote, printRows, printSection, sats, type Row } from '../output.js';
+import { bitcoinBlocks, bps, dim, output, percent, printNote, printRows, printSection, sats, stx, type Row } from '../output.js';
 import {
   fetchIndexedBond,
   fetchIndexedBondAllowance,
   fetchIndexedBondAllowlist,
+  fetchIndexedBondEvents,
   fetchIndexedBondRegistrations,
+  type IndexedBondEvent,
   type IndexedBondRegistration,
 } from '../staking-api.js';
 
@@ -116,18 +118,22 @@ interface FillBreakdown {
 }
 
 export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): Promise<void> {
-  const [pox, bond, filledSbtc, indexedBond, indexedRegistrations] = await Promise.all([
+  const [pox, bond, indexedBond, indexedRegistrations, indexedEvents] = await Promise.all([
     fetchPoxInfo(ctx.net),
     fetchProtocolBond({ bondIndex, ...ctx.net }),
-    fetchTotalSbtcStakedForBond({ bondIndex, ...ctx.net }),
     fetchIndexedBond(ctx, bondIndex),
     fetchIndexedBondRegistrations(ctx, bondIndex),
+    fetchIndexedBondEvents(ctx, bondIndex),
   ]);
 
   if (!bond) throw new CliError(`bond ${bondIndex} is not configured on this contract`);
 
-  const fill = indexedBond && indexedRegistrations
-    ? fillFromIndex(indexedRegistrations)
+  const filledSats = indexedBond
+    ? BigInt(indexedBond.balances.locked.btc)
+    : await fetchTotalSbtcStakedForBond({ bondIndex, ...ctx.net });
+
+  const fill = indexedBond && indexedRegistrations && indexedEvents
+    ? fillFromIndex(indexedRegistrations, indexedEvents)
     : await scanBondFill(ctx, bondIndex);
   const splitSum = fill.btcSats + fill.sbtcSats;
 
@@ -154,7 +160,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
 
   let allowlist: AllowlistEntryWithFill[] | undefined;
   let allowlistTruncated = false;
-  let capacitySats: bigint | undefined;
+  let capacitySats = indexedBond ? BigInt(indexedBond.parameters.btc_capacity) : undefined;
   if (opts.allowlist) {
     const indexedAllowlist = await fetchIndexedBondAllowlist(ctx, bondIndex);
     const scan = indexedBond && indexedAllowlist
@@ -168,9 +174,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       filledSats: fill.byStaker.get(entry.staker)?.sats ?? 0n,
     }));
     allowlistTruncated = scan.truncated;
-    capacitySats = indexedBond
-      ? BigInt(indexedBond.parameters.btc_capacity)
-      : allowlist.reduce((sum, e) => sum + e.maxSats, 0n);
+    if (capacitySats === undefined) capacitySats = allowlist.reduce((sum, e) => sum + e.maxSats, 0n);
   }
 
   const firstPox5 = resolveFirstPox5Cycle(ctx, pox);
@@ -202,15 +206,17 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       stxValueRatio: bond.stxValueRatio,
       minUstxRatioBps: bond.minUstxRatioBps,
       earlyUnlockBytes: bond.earlyUnlockBytes,
-      filledSats: filledSbtc,
+      filledSats,
       filledBtcLockedSats: fill.btcSats,
       filledSbtcLockedSats: fill.sbtcSats,
+      lockedUstx: indexedBond ? BigInt(indexedBond.balances.locked.stx) : null,
       participants: fill.participants,
       earlyExitedSats: fill.earlyExitedSats,
       earlyExitParticipants: fill.earlyExitParticipants,
       unstakedSats: fill.unstakedSats,
       unstakeParticipants: fill.unstakeParticipants,
       fillHistoryComplete: fill.historyComplete,
+      paidOutSats: indexedBond ? BigInt(indexedBond.balances.paid_out.btc) : null,
       capacitySats: capacitySats ?? null,
       allowlist: allowlist ?? null,
       allowlistTruncated: allowlistTruncated || undefined,
@@ -227,12 +233,13 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
       ];
       if (capacitySats !== undefined) {
         rows.push(['capacity', sats(capacitySats)]);
-        rows.push(['filled', `${sats(filledSbtc)} — ${percent(filledSbtc, capacitySats)} of capacity`]);
+        rows.push(['filled', `${sats(filledSats)} — ${percent(filledSats, capacitySats)} of capacity`]);
       } else {
-        rows.push(['filled', sats(filledSbtc)]);
+        rows.push(['filled', sats(filledSats)]);
       }
       rows.push(['  via L1 BTC', sats(fill.btcSats)]);
       rows.push(['  via sBTC', sats(fill.sbtcSats)]);
+      if (indexedBond) rows.push(['paired STX locked', stx(BigInt(indexedBond.balances.locked.stx))]);
       if (fill.earlyExitedSats > 0n) {
         const n = fill.earlyExitParticipants;
         rows.push(['early-exited (L1)', `${sats(fill.earlyExitedSats)} — ${n} staker${n === 1 ? '' : 's'}`]);
@@ -241,6 +248,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
         const n = fill.unstakeParticipants;
         rows.push(['unstaked (sBTC)', `${sats(fill.unstakedSats)} — ${n} staker${n === 1 ? '' : 's'}`]);
       }
+      if (indexedBond) rows.push(['rewards paid out', sats(BigInt(indexedBond.balances.paid_out.btc))]);
       for (const a of allowances) {
         rows.push(['allowance', explorerLink(ctx.config, a.address)]);
         rows.push(['  allocation', a.allocationSats === undefined ? 'not allowlisted' : sats(a.allocationSats)]);
@@ -254,7 +262,7 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
         if (a.unstakedSats > 0n) rows.push(['  unstaked', sats(a.unstakedSats)]);
       }
       printRows(rows);
-      if (splitSum !== filledSbtc) {
+      if (splitSum !== filledSats) {
         printNote(
           `custody split is reconstructed from register / unstake-sbtc / announce-l1-early-exit events and sums to ${sats(splitSum)}, which differs from the live "filled" total — e.g. rollovers between bonds aren't accounted for`,
         );
@@ -314,16 +322,73 @@ export async function bondCommand(ctx: Ctx, bondIndex: number, opts: BondOpts): 
   );
 }
 
-function fillFromIndex(registrations: IndexedBondRegistration[]): FillBreakdown {
+function fillFromIndex(
+  registrations: IndexedBondRegistration[],
+  events: IndexedBondEvent[],
+): FillBreakdown {
   const byStaker = new Map<string, { sats: bigint; isL1: boolean; earlyExitedSats: bigint; unstakedSats: bigint }>();
+  const baseSeen = new Set<string>();
+  const l1ReleasedSinceBase = new Map<string, bigint>();
+  const sbtcRemainingSinceBase = new Map<string, bigint>();
+  const historicalL1Released = new Map<string, bigint>();
+  const historicalSbtcWithdrawn = new Map<string, bigint>();
   let btcSats = 0n;
   let sbtcSats = 0n;
   let participants = 0;
 
+  // The event feed is newest-first. Only exits newer than the most recent
+  // register/update event affect the registration row's current base amount;
+  // older exits remain useful history but must not be subtracted twice.
+  for (const event of events) {
+    if (event.name === 'register-for-bond' || event.name === 'update-bond-registration') {
+      baseSeen.add(event.data.staker);
+    } else if (event.name === 'announce-l1-early-exit') {
+      const { staker } = event.data;
+      const amount = BigInt(event.data.released.btc);
+      historicalL1Released.set(staker, (historicalL1Released.get(staker) ?? 0n) + amount);
+      if (!baseSeen.has(staker)) {
+        l1ReleasedSinceBase.set(staker, (l1ReleasedSinceBase.get(staker) ?? 0n) + amount);
+      }
+    } else if (event.name === 'unstake-sbtc') {
+      const { staker } = event.data;
+      historicalSbtcWithdrawn.set(
+        staker,
+        (historicalSbtcWithdrawn.get(staker) ?? 0n) + BigInt(event.data.withdrawn.btc),
+      );
+      if (!baseSeen.has(staker) && !sbtcRemainingSinceBase.has(staker)) {
+        sbtcRemainingSinceBase.set(staker, BigInt(event.data.remaining.btc));
+      }
+    }
+  }
+
+  let earlyExitedSats = 0n;
+  let earlyExitParticipants = 0;
+  let unstakedSats = 0n;
+  let unstakeParticipants = 0;
+
   for (const registration of registrations) {
-    const amount = BigInt(registration.balances.btc);
+    const registered = BigInt(registration.balances.btc);
     const isL1 = registration.type === 'l1';
-    byStaker.set(registration.staker, { sats: amount, isL1, earlyExitedSats: 0n, unstakedSats: 0n });
+    const earlyExited = historicalL1Released.get(registration.staker) ?? 0n;
+    const unstaked = historicalSbtcWithdrawn.get(registration.staker) ?? 0n;
+    const releasedSinceBase = l1ReleasedSinceBase.get(registration.staker) ?? 0n;
+    const amount = isL1
+      ? registered > releasedSinceBase ? registered - releasedSinceBase : 0n
+      : sbtcRemainingSinceBase.get(registration.staker) ?? registered;
+    byStaker.set(registration.staker, {
+      sats: amount,
+      isL1,
+      earlyExitedSats: earlyExited,
+      unstakedSats: unstaked,
+    });
+    if (earlyExited > 0n) {
+      earlyExitedSats += earlyExited;
+      earlyExitParticipants++;
+    }
+    if (unstaked > 0n) {
+      unstakedSats += unstaked;
+      unstakeParticipants++;
+    }
     if (amount <= 0n) continue;
     participants++;
     if (isL1) btcSats += amount;
@@ -335,11 +400,11 @@ function fillFromIndex(registrations: IndexedBondRegistration[]): FillBreakdown 
     sbtcSats,
     participants,
     truncated: false,
-    earlyExitedSats: 0n,
-    earlyExitParticipants: 0,
-    unstakedSats: 0n,
-    unstakeParticipants: 0,
-    historyComplete: false,
+    earlyExitedSats,
+    earlyExitParticipants,
+    unstakedSats,
+    unstakeParticipants,
+    historyComplete: true,
     byStaker,
   };
 }

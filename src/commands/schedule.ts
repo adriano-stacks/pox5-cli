@@ -30,11 +30,13 @@ export async function scheduleCommand(ctx: Ctx, bondIndex: number): Promise<void
   const ranges = bondPhaseRanges({ bondIndex, poxInfo: pox });
   const setupWindowOpen = ranges[0]!.startBurnHeight;
 
-  const indexed = await fetchIndexedBond(ctx, bondIndex);
-  const [l1Unlock, announced, isBondSetup] = indexed
-    ? [BigInt(indexed.schedule.unlock.bitcoin_height), indexed.transaction?.bitcoin_block.height, true] as const
+  const [indexed, l1Unlock] = await Promise.all([
+    fetchIndexedBond(ctx, bondIndex),
+    fetchBondL1UnlockHeight({ bondIndex, ...ctx.net }),
+  ]);
+  const [announced, isBondSetup] = indexed
+    ? [indexed.transaction?.bitcoin_block.height, true] as const
     : await Promise.all([
-        fetchBondL1UnlockHeight({ bondIndex, ...ctx.net }),
         fetchAnnouncementHeight(ctx, bondIndex),
         fetchProtocolBond({ bondIndex, ...ctx.net }).then((bond) => bond !== undefined),
       ]);

@@ -1,7 +1,7 @@
 import { ClarityType, cvToValue, hexToCV, type ClarityValue } from '@stacks/transactions';
 import type { Ctx } from '../context.js';
 import { CliError } from '../errors.js';
-import { dim, output, printNote, printSection } from '../output.js';
+import { dim, output, percent, printNote, printSection } from '../output.js';
 import { fetchIndexedBonds } from '../staking-api.js';
 
 const EVENT_PAGE_SIZE = 50;
@@ -14,6 +14,13 @@ interface BondRecord {
   targetRateBps: number;
   stxValueRatio: bigint;
   minUstxRatioBps: number;
+  status?: 'upcoming' | 'active' | 'unlocked';
+  capacitySats?: bigint;
+  lockedSats?: bigint;
+  lockedUstx?: bigint;
+  paidOutSats?: bigint;
+  allowedCount?: number;
+  registeredCount?: number;
 }
 
 export async function bondsCommand(ctx: Ctx): Promise<void> {
@@ -28,6 +35,13 @@ export async function bondsCommand(ctx: Ctx): Promise<void> {
             targetRateBps: bond.parameters.target_rate_bps,
             stxValueRatio: BigInt(bond.parameters.stx_value_ratio),
             minUstxRatioBps: Number(bond.parameters.minimum_stx_ratio),
+            status: bond.status,
+            capacitySats: BigInt(bond.parameters.btc_capacity),
+            lockedSats: BigInt(bond.balances.locked.btc),
+            lockedUstx: BigInt(bond.balances.locked.stx),
+            paidOutSats: BigInt(bond.balances.paid_out.btc),
+            allowedCount: bond.registrations.allowed_count,
+            registeredCount: bond.registrations.registered_count,
           }))
           .sort((a, b) => a.bondIndex - b.bondIndex),
         truncated: false,
@@ -44,12 +58,15 @@ export async function bondsCommand(ctx: Ctx): Promise<void> {
         return;
       }
 
-      const header = ['idx', 'first cycle', 'start (BTC)', 'target', 'ratio (uSTX/100sat)'];
+      const header = ['idx', 'status', 'first cycle', 'start (BTC)', 'target', 'filled', 'registrations', 'ratio (uSTX/100sat)'];
       const rows = bonds.map((b) => [
         String(b.bondIndex),
+        b.status ?? '—',
         String(b.firstRewardCycle),
         String(b.bondStartHeight),
         `${(b.targetRateBps / 100).toFixed(2)}%`,
+        b.lockedSats === undefined || b.capacitySats === undefined ? '—' : percent(b.lockedSats, b.capacitySats),
+        b.registeredCount === undefined || b.allowedCount === undefined ? '—' : `${b.registeredCount}/${b.allowedCount}`,
         String(b.stxValueRatio),
       ]);
       const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)));

@@ -7,6 +7,24 @@ interface CursorPage<T> {
   results: T[];
 }
 
+interface IndexedTransactionPosition {
+  tx_id: string;
+  event_index: number;
+}
+
+interface IndexedBlockPosition {
+  height: number;
+  hash: string;
+  index_hash: string;
+  time: number;
+  tx_index: number;
+}
+
+interface IndexedBitcoinBlockPosition {
+  height: number;
+  time: number;
+}
+
 export interface IndexedBond {
   index: number;
   pox_version: 'pox5';
@@ -40,6 +58,60 @@ export interface IndexedBondRegistration {
   l1_lockup?: { transactions: { tx_id: string; output_index: number }[] };
   l2_lockup?: { tx_id: string };
 }
+
+interface IndexedBondEventBase {
+  bond_index: number;
+  transaction: IndexedTransactionPosition;
+  block: IndexedBlockPosition;
+  bitcoin_block: IndexedBitcoinBlockPosition;
+}
+
+export type IndexedBondEvent = IndexedBondEventBase & (
+  | {
+      name: 'register-for-bond';
+      data: IndexedBondRegistration;
+    }
+  | {
+      name: 'update-bond-registration';
+      data: IndexedBondRegistration & { old_signer: string };
+    }
+  | {
+      name: 'announce-l1-early-exit';
+      data: { staker: string; signer: string; released: { btc: string } };
+    }
+  | {
+      name: 'unstake-sbtc';
+      data: {
+        staker: string;
+        signer: string;
+        withdrawn: { btc: string };
+        remaining: { btc: string };
+      };
+    }
+  | {
+      name: 'bond-distribution';
+      data: {
+        target_yield: string;
+        rewards: { btc: string };
+        staked: { btc: string };
+        accrued_rewards_per_sat: string;
+        cumulative_rewards_per_sat: string;
+      };
+    }
+  | {
+      name: 'claim-staker-rewards-for-signer';
+      data: {
+        signer_manager: string;
+        staker: string;
+        reward_cycle: number;
+        claimed: { btc: string };
+      };
+    }
+  | {
+      name: 'setup-bond' | 'add-to-allowlist';
+      data: Record<string, unknown>;
+    }
+);
 
 export interface IndexedBondPosition {
   bond_index: number;
@@ -79,6 +151,43 @@ export interface IndexedSignerStaker {
   types: ('stx' | 'btc')[];
 }
 
+export interface IndexedSignerKeyGrant {
+  signer_key: string;
+  auth_id: string;
+  tx_id: string;
+}
+
+export interface IndexedCycleSignerManager {
+  signer_manager: string;
+  registered_at: {
+    block_height: number;
+    bitcoin_block_height: number;
+    tx_id: string;
+  };
+  granted_keys: IndexedSignerKeyGrant[];
+  grant_active: boolean;
+  pending_key_update: null | {
+    signer_key: string;
+    effective_cycle: number;
+    tx_id: string;
+  };
+}
+
+export interface IndexedCycleSigner {
+  signing_key: string;
+  weight: { amount: number; percent: number };
+  staked_stx: { amount: string; percent: number };
+  signer_managers: IndexedCycleSignerManager[];
+}
+
+export interface IndexedStakingRewards {
+  btc: {
+    reward_amount: string;
+    burn_amount: string;
+    total_amount: string;
+  };
+}
+
 export interface IndexedStxBalance {
   balance: string;
   available: string;
@@ -103,6 +212,13 @@ export function fetchIndexedBondRegistrations(
   bondIndex: number,
 ): Promise<IndexedBondRegistration[] | undefined> {
   return fetchAll(ctx, `/v3/staking/bonds/${bondIndex}/registrations`, 50);
+}
+
+export function fetchIndexedBondEvents(
+  ctx: Ctx,
+  bondIndex: number,
+): Promise<IndexedBondEvent[] | undefined> {
+  return fetchAll(ctx, `/v3/staking/bonds/${bondIndex}/events`, 50);
 }
 
 export function fetchIndexedBondAllowlist(
@@ -147,6 +263,14 @@ export function fetchIndexedSignerStakers(
   principal: string,
 ): Promise<IndexedSignerStaker[] | undefined> {
   return fetchAll(ctx, `/v3/staking/signers/${encodeURIComponent(principal)}/stakers`, 200);
+}
+
+export function fetchIndexedCurrentCycleSigners(ctx: Ctx): Promise<IndexedCycleSigner[] | undefined> {
+  return fetchAll(ctx, '/v3/staking/cycles/current/signers', 100);
+}
+
+export function fetchIndexedStakingRewards(ctx: Ctx): Promise<IndexedStakingRewards | undefined> {
+  return fetchJson(ctx, '/v3/staking/rewards');
 }
 
 export async function fetchIndexedFtBalance(

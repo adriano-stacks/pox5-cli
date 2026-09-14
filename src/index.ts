@@ -225,7 +225,7 @@ program
 
 program
   .command('totals')
-  .description('protocol-wide totals (sBTC staked, reserve fund; per-bond fill or per-cycle STX)')
+  .description('protocol-wide totals (staking rewards, sBTC staked, reserve fund; per-bond fill or per-cycle STX)')
   .option('--bond <index>', 'include this bond’s fill + shares', intArg('--bond'))
   .option('--cycle <cycle>', 'include this cycle’s STX stacked + shares', intArg('--cycle'))
   .action(async (o, cmd) => totalsCommand(ctxOf(cmd), { bond: o.bond, cycle: o.cycle }));

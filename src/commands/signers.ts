@@ -25,7 +25,11 @@ import {
   stx,
   type Row,
 } from '../output.js';
-import { fetchIndexedSigners, fetchIndexedSignerStakers } from '../staking-api.js';
+import {
+  fetchIndexedCurrentCycleSigners,
+  fetchIndexedSignerStakers,
+  type IndexedCycleSignerManager,
+} from '../staking-api.js';
 
 export interface SignersOpts {
   staker: string[];
@@ -38,13 +42,24 @@ interface StakerEntry {
   amountUstx: bigint | null;
 }
 
-interface SignerEntry {
+interface SignerManagerEntry {
   signerManager: string;
   controlledBy: string | null;
-  signerKey: string | null;
-  delegatedUstx: bigint;
-  shares: bigint;
+  registeredAt: IndexedCycleSignerManager['registered_at'] | null;
+  grantedKeys: IndexedCycleSignerManager['granted_keys'];
+  grantActive: boolean | null;
+  pendingKeyUpdate: IndexedCycleSignerManager['pending_key_update'];
   stakers: StakerEntry[] | null;
+}
+
+interface SignerEntry {
+  signerKey: string | null;
+  stackedUstx: bigint;
+  stackedPercent: number | null;
+  weight: number | null;
+  weightPercent: number | null;
+  shares: bigint | null;
+  managers: SignerManagerEntry[];
 }
 
 interface ContractEvent {
@@ -62,13 +77,16 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
   const pox = await fetchPoxInfo(ctx.net);
   const cycle = cycleArg ?? pox.rewardCycleId;
 
-  const signers = await collectSignerSet(ctx, cycle);
+  const signerSet = await collectSignerSet(ctx, cycle, pox.rewardCycleId);
+  const signers = signerSet.entries;
   progress(`reading totals for cycle ${cycle}…`);
   let totalUstx: bigint;
   let totalShares: bigint;
   try {
     [totalUstx, totalShares] = await Promise.all([
-      fetchTotalUstxStacked({ rewardCycle: cycle, ...ctx.net }),
+      signerSet.indexed
+        ? Promise.resolve(signers.reduce((sum, signer) => sum + signer.stackedUstx, 0n))
+        : fetchTotalUstxStacked({ rewardCycle: cycle, ...ctx.net }),
       fetchTotalSharesStakedForCycle({ rewardCycle: cycle, ...ctx.net }),
     ]);
   } finally {
@@ -91,25 +109,50 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
       }
     } catch (e) {
       stakersError = (e as Error).message;
-      for (const s of signers) s.stakers = null;
+      for (const signer of signers) {
+        for (const manager of signer.managers) manager.stakers = null;
+      }
     } finally {
       clearProgress();
     }
   }
+
+  const totalWeight = signerSet.indexed
+    ? signers.reduce((sum, signer) => sum + signer.weight!, 0)
+    : null;
+  const managerCount = signers.reduce((sum, signer) => sum + signer.managers.length, 0);
 
   output(
     ctx,
     {
       cycle,
       currentCycle: pox.rewardCycleId,
-      totals: { ustxDelegated: totalUstx, shares: totalShares, signerCount: signers.length },
+      totals: {
+        ustxStacked: totalUstx,
+        ustxDelegated: totalUstx,
+        shares: totalShares,
+        weight: totalWeight,
+        signerCount: signers.length,
+        managerCount,
+      },
       signers: signers.map((s) => ({
-        signerManager: s.signerManager,
-        controlledBy: s.controlledBy,
         signerKey: s.signerKey,
-        delegatedUstx: s.delegatedUstx,
+        stackedUstx: s.stackedUstx,
+        stackedPercent: s.stackedPercent,
+        weight: s.weight,
+        weightPercent: s.weightPercent,
         shares: s.shares,
-        stakers: s.stakers === null ? null : s.stakers.map((x) => ({ staker: x.staker, amountUstx: x.amountUstx })),
+        signerManagers: s.managers.map((manager) => ({
+          signerManager: manager.signerManager,
+          controlledBy: manager.controlledBy,
+          registeredAt: manager.registeredAt,
+          grantActive: manager.grantActive,
+          grantedKeys: manager.grantedKeys,
+          pendingKeyUpdate: manager.pendingKeyUpdate,
+          stakers: manager.stakers === null
+            ? null
+            : manager.stakers.map((x) => ({ staker: x.staker, amountUstx: x.amountUstx })),
+        })),
       })),
       otherStakers: other.length ? other : undefined,
       stakerScanTruncated: truncated || undefined,
@@ -119,23 +162,44 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
       printSection(`Signer set — cycle ${cycle}`);
       printRows([
         ['cycle', cycle === pox.rewardCycleId ? `${cycle} (current)` : cycle],
-        ['signers', signers.length],
-        ['total delegated', stx(totalUstx)],
-        ['total shares', stx(totalShares)],
+        ['signing keys', signers.length],
+        ['signer managers', managerCount],
+        ['total stacked', stx(totalUstx)],
+        ['total reward shares', stx(totalShares)],
+        ...(totalWeight === null ? [] : [['total signer weight', totalWeight] as Row]),
       ]);
 
       if (signers.length === 0) {
         printNote('no signers above the per-cycle threshold for this cycle');
       } else {
         signers.forEach((s, i) => {
-          printSection(`#${i + 1}  ${explorerLink(ctx.config, s.signerManager)}`);
-          const rows: Row[] = [];
-          if (s.controlledBy) rows.push(['controlled by', explorerLink(ctx.config, s.controlledBy)]);
-          rows.push(['signer key', s.signerKey]);
-          rows.push(['delegated', `${stx(s.delegatedUstx)} (${percent(s.delegatedUstx, totalUstx)})`]);
-          rows.push(['shares', stx(s.shares)]);
+          printSection(`#${i + 1}`);
+          const rows: Row[] = [
+            ['signer key', s.signerKey],
+            ['stacked', `${stx(s.stackedUstx)} (${percent(s.stackedUstx, totalUstx)})`],
+          ];
+          if (s.weight !== null) rows.push(['signer weight', `${s.weight} (${s.weightPercent!.toFixed(2)}%)`]);
+          if (s.shares !== null) rows.push(['reward shares', stx(s.shares)]);
+          rows.push(['signer managers', s.managers.length]);
+          for (const [managerIndex, manager] of s.managers.entries()) {
+            const prefix = s.managers.length === 1 ? 'manager' : `manager ${managerIndex + 1}`;
+            rows.push([prefix, explorerLink(ctx.config, manager.signerManager)]);
+            if (manager.controlledBy) rows.push(['  controlled by', explorerLink(ctx.config, manager.controlledBy)]);
+            if (manager.registeredAt) {
+              rows.push(['  registered at', `Bitcoin block ${manager.registeredAt.bitcoin_block_height}`]);
+            }
+            if (manager.grantActive !== null) rows.push(['  key grant active', manager.grantActive]);
+            if (manager.pendingKeyUpdate) {
+              rows.push([
+                '  pending key',
+                `${manager.pendingKeyUpdate.signer_key.replace(/^0x/, '')} (cycle ${manager.pendingKeyUpdate.effective_cycle})`,
+              ]);
+            }
+          }
           printRows(rows);
-          printSignerStakers(ctx, s.stakers, complete);
+          for (const manager of s.managers) {
+            printSignerStakers(ctx, manager, complete, s.managers.length > 1);
+          }
         });
       }
 
@@ -156,15 +220,35 @@ export async function signersCommand(ctx: Ctx, cycleArg: number | undefined, opt
   );
 }
 
-async function collectSignerSet(ctx: Ctx, cycle: number): Promise<SignerEntry[]> {
+async function collectSignerSet(
+  ctx: Ctx,
+  cycle: number,
+  currentCycle: number,
+): Promise<{ entries: SignerEntry[]; indexed: boolean }> {
+  if (cycle === currentCycle) {
+    progress(`reading the indexed signer set for cycle ${cycle}…`);
+    const indexed = await fetchIndexedCurrentCycleSigners(ctx);
+    if (indexed !== undefined) {
+      clearProgress();
+      return {
+        indexed: true,
+        entries: indexed.map((signer) => ({
+          signerKey: signer.signing_key.replace(/^0x/, ''),
+          stackedUstx: BigInt(signer.staked_stx.amount),
+          stackedPercent: signer.staked_stx.percent,
+          weight: signer.weight.amount,
+          weightPercent: signer.weight.percent,
+          shares: null,
+          managers: signer.signer_managers.map(managerFromIndex),
+        })),
+      };
+    }
+  }
+
   const entries: SignerEntry[] = [];
   const seen = new Set<string>();
   try {
     progress('reading the signer registry…');
-    const indexedSigners = await fetchIndexedSigners(ctx);
-    const signerKeys = indexedSigners === undefined
-      ? undefined
-      : new Map(indexedSigners.map((item) => [item.signer, item.signer_key.replace(/^0x/, '')]));
     progress(`reading the signer set for cycle ${cycle}…`);
     let signer = await fetchSignerSetFirstItem({ rewardCycle: cycle, ...ctx.net });
 
@@ -174,28 +258,48 @@ async function collectSignerSet(ctx: Ctx, cycle: number): Promise<SignerEntry[]>
       seen.add(principal);
       progress(`reading the signer set for cycle ${cycle}… ${entries.length + 1} found`);
 
-      const indexedKey = signerKeys?.get(principal);
       const [delegatedUstx, shares, next, info] = await Promise.all([
         fetchAmountDelegatedForSigner({ signerManager: principal, rewardCycle: cycle, ...ctx.net }),
         fetchSignerSharesStakedForCycle({ signerManager: principal, rewardCycle: cycle, ...ctx.net }),
         fetchSignerSetNextItem({ signer: principal, rewardCycle: cycle, ...ctx.net }),
-        indexedKey === undefined ? fetchSignerInfo({ signerManager: principal, ...ctx.net }) : undefined,
+        fetchSignerInfo({ signerManager: principal, ...ctx.net }),
       ]);
 
       entries.push({
-        signerManager: principal,
-        controlledBy: contractIssuer(principal),
-        signerKey: indexedKey ?? info?.signerKey ?? null,
-        delegatedUstx,
+        signerKey: info?.signerKey ?? null,
+        stackedUstx: delegatedUstx,
+        stackedPercent: null,
+        weight: null,
+        weightPercent: null,
         shares,
-        stakers: null,
+        managers: [{
+          signerManager: principal,
+          controlledBy: contractIssuer(principal),
+          registeredAt: null,
+          grantedKeys: [],
+          grantActive: null,
+          pendingKeyUpdate: null,
+          stakers: null,
+        }],
       });
       signer = next;
     }
-    return entries;
+    return { entries, indexed: false };
   } finally {
     clearProgress();
   }
+}
+
+function managerFromIndex(manager: IndexedCycleSignerManager): SignerManagerEntry {
+  return {
+    signerManager: manager.signer_manager,
+    controlledBy: contractIssuer(manager.signer_manager),
+    registeredAt: manager.registered_at,
+    grantedKeys: manager.granted_keys,
+    grantActive: manager.grant_active,
+    pendingKeyUpdate: manager.pending_key_update,
+    stakers: null,
+  };
 }
 
 async function discoverStakers(
@@ -204,11 +308,12 @@ async function discoverStakers(
   signers: SignerEntry[],
   useIndex: boolean,
 ): Promise<{ entries: StakerEntry[]; truncated: boolean }> {
+  const managers = signers.flatMap((signer) => signer.managers);
   let signersRead = 0;
   const indexed = useIndex
-    ? await mapLimit(signers, RESOLVE_CONCURRENCY, async (signer) => {
-        progress(`reading signer stakers… ${++signersRead}/${signers.length}`);
-        return fetchIndexedSignerStakers(ctx, signer.signerManager);
+    ? await mapLimit(managers, RESOLVE_CONCURRENCY, async (manager) => {
+        progress(`reading signer stakers… ${++signersRead}/${managers.length}`);
+        return fetchIndexedSignerStakers(ctx, manager.signerManager);
       })
     : [];
   const indexedComplete = useIndex && indexed.every((items) => items !== undefined);
@@ -282,8 +387,10 @@ async function resolveStaker(ctx: Ctx, staker: string, cycle: number): Promise<S
 function attachStakers(signers: SignerEntry[], stakers: StakerEntry[]): StakerEntry[] {
   const bySigner = new Map<string, StakerEntry[]>();
   for (const s of signers) {
-    s.stakers = [];
-    bySigner.set(s.signerManager, s.stakers);
+    for (const manager of s.managers) {
+      manager.stakers = [];
+      bySigner.set(manager.signerManager, manager.stakers);
+    }
   }
   const other: StakerEntry[] = [];
   for (const st of stakers) {
@@ -294,13 +401,23 @@ function attachStakers(signers: SignerEntry[], stakers: StakerEntry[]): StakerEn
   return other;
 }
 
-function printSignerStakers(ctx: Ctx, stakers: StakerEntry[] | null, complete: boolean): void {
+function printSignerStakers(
+  ctx: Ctx,
+  manager: SignerManagerEntry,
+  complete: boolean,
+  labelManager: boolean,
+): void {
+  const stakers = manager.stakers;
   if (stakers === null) return;
   if (stakers.length === 0) {
-    if (complete) printNote('stakers: none delegating this cycle');
+    if (complete) {
+      const via = labelManager ? ` via ${manager.signerManager}` : '';
+      printNote(`stakers${via}: none delegating this cycle`);
+    }
     return;
   }
-  process.stdout.write(dim(`  stakers (${stakers.length}):\n`));
+  const via = labelManager ? ` via ${manager.signerManager}` : '';
+  process.stdout.write(dim(`  stakers${via} (${stakers.length}):\n`));
   for (const st of stakers) {
     process.stdout.write(`    ${explorerLink(ctx.config, st.staker)}  ${stx(st.amountUstx!)}\n`);
   }
